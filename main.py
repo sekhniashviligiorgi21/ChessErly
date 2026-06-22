@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from stockfish import Stockfish
 import chess
+import chess.engine
 import chess.polyglot
 from fastapi.middleware.cors import CORSMiddleware
 from queue import Queue
@@ -37,10 +38,13 @@ class MOVERequests (BaseModel):
 book_path = "Performance.bin"
 
 
+
 engine_pool = Queue()
+chess_engine_pool = Queue()
 
 for _ in range(2):
     engine_pool.put(Stockfish(path="/usr/bin/stockfish"))
+    chess_engine_pool.put(chess.engine.SimpleEngine.popen_uci("/usr/bin/stockfish"))
 
 @contextmanager
 def get_engine():
@@ -50,15 +54,21 @@ def get_engine():
     finally:
         engine_pool.put(engine)
 
+@contextmanager
+def get_chess_engine():
+    engine = chess_engine_pool.get()
+    try:
+        yield engine
+    finally:
+        chess_engine_pool.put(engine)
 
+book_reader = chess.polyglot.open_reader(book_path)
 
 #----------------------------evaluation function-----------------------
 def get_evaluation (request: FENRequests):
 	with get_engine() as stockfish:	
 		stockfish.set_position(request.moves_list)
 		stockfish.set_depth(request.depth)
-		greedy_list = []
-		second_list = []
 		brilliant_loss = 0
 		eval_before=stockfish.get_evaluation()
 		top_moves = stockfish.get_top_moves(2)
@@ -66,21 +76,22 @@ def get_evaluation (request: FENRequests):
 		board=chess.Board()
 		for move in request.moves_list:
 			board.push_uci(move)
-		with chess.polyglot.open_reader(book_path) as reader:
-			book_moves = [entry.move for entry in reader.find_all(board)]
+		book_moves = [entry.move for entry in book_reader.find_all(board)]
 	#determining second best move
 		if len(top_moves) ==2:
 			second_best_eval = top_moves[1]["Centipawn"]
-		elif len(top_moves) == 1:
 			second_best_eval=top_moves[0]["Centipawn"]
 		best_move=top_moves[0]["Move"]
 		move_played=request.move
 		request.moves_list.append(move_played)
-		greedy_list.append(move_played)
+		if move_played:
+			board.push_uci(move_played)
 		stockfish.set_position(request.moves_list)
 		eval_after=stockfish.get_evaluation()
 	#determining whose move it is
 		side_to_move="w" if len(request.moves_list)%2 == 1 else "b"
+
+	#calculating the loss of the eval after the move
 		if eval_before["type"] != "cp" or eval_after["type"] != "cp":
 			loss=0
 		else:		
@@ -91,8 +102,6 @@ def get_evaluation (request: FENRequests):
 				loss=eval_after["value"]-eval_before["value"]
 				brilliant_loss = second_best_eval-eval_before["value"]
 			loss=max(loss, 0)
-
-
 
 	#determining accuracy of a played move
 		accuracy ="none"
@@ -113,6 +122,7 @@ def get_evaluation (request: FENRequests):
 				accuracy="mistake"
 			elif 300 <= loss:
 				accuracy="blunder"
+
 	#making accuracy compatible for mates
 		if eval_before ["type"]=="cp" and eval_after ["type"]=="mate":
 			if side_to_move == "w":
@@ -125,50 +135,23 @@ def get_evaluation (request: FENRequests):
 					accuracy = "blunder"
 				else:
 					accuracy="mistake"
-	#setting lower depth so stockfish gets the lines faster
-		stockfish.set_depth(5)
+
 	#getting lines
-		def get_lines():
-			greedy_list = request.moves_list.copy()
-			line = []
-			for i in range(5):
-				greedy_move = stockfish.get_best_move()
-				if not greedy_move:
-					break
-				greedy_list.append(greedy_move)
-				line.append(greedy_move)
-				stockfish.set_position(greedy_list)
-			return line
-		best_line=get_lines()
-		def get_second_line():
-			stockfish.set_position(request.moves_list)
-			second_list = request.moves_list.copy()
-			second_line = []
-			excellent_moves = stockfish.get_top_moves(2)
-			if len(excellent_moves) < 2:
-			    return []
-			excellent_move = excellent_moves[1]["Move"]
-			if not excellent_move:
-				return("")
-			second_line.append(excellent_move)
-			second_list.append(excellent_move)
-			stockfish.set_position(second_list)
-			for i in range(4):
-				best_move = stockfish.get_best_move()
-				if not best_move:
-					break
-				second_list.append(best_move)
-				second_line.append(best_move)
-				stockfish.set_position(second_list)
-			return second_line
-		excellent_line = get_second_line()
-		stockfish.set_depth(request.depth)
+	def get_lines():
+	    with get_chess_engine() as engine:
+	        lines = engine.analyse(board, chess.engine.Limit(depth=request.depth), multipv=2)
+	    best_line = [move.uci() for move in lines[0].get("pv", [])]
+	    excellent_line = [move.uci() for move in lines[1].get("pv", [])] if len(lines) > 1 else []
+	    return best_line, excellent_line
+	best_line, excellent_line = get_lines()
+
 
 	return{
 	"depth": request.depth,
 	"move_played": move_played,
 	"best_move": best_move,
 	"eval": eval_after,
+	"excellent_eval": top_moves[1]["Centipawn"] if len(top_moves) > 1 else None,
 	"move_accuracy": accuracy,
 	"best_line": best_line,
 	"excellent_line": excellent_line,

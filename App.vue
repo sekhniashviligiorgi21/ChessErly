@@ -1,10 +1,9 @@
 <script setup>
-  import Analysis from "./pages/Analysis.vue"
-  import Title from "./assets/Title.vue"
+  import { ref } from 'vue' 
 </script>
 
 <template>
-  <Analysis/>
+  <RouterView/>
 </template>
 
 <style>
@@ -55,4 +54,15 @@
     max-width: 100%;
     display: block;
   }
+
+  .app-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    max-width: 1600px;
+    margin: 0 auto;
+    align-items: start;
+    padding: 1rem;
+    gap: 1rem;
+  }
 </style>
+

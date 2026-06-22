@@ -1,27 +1,37 @@
 <script setup>
-	import { ref } from 'vue' 
-  const activeButton = ref("import")
+	import { ref, computed } from 'vue' 
+  import { useRouter, useRoute } from 'vue-router'
+
+  const router = useRouter()
+  const route = useRoute()
 
   const activeColor = "135deg, #414833, #333d29"
   const idleColor = "135deg, #656d4a, #414833"
 
-  function setActive(buttonName) {
-    activeButton.value = buttonName
-  }
 
   function bgColor(buttonName) {
     return activeButton.value === buttonName ? activeColor : idleColor
   }
 
   function analyzeClick() {
-  	emit('update:pageNum', 1)
-  	setActive('analyze')
+  	router.push('/')
   }
 
   function importClick() {
-  	emit('update:pageNum', 0)
-  	setActive('import')
+  	router.push('/Review')
   }
+
+  function gameClick() {
+  	router.push('/vsComputer')
+  }
+
+  const activeButton = computed(() => {
+  	if (route.path === '/Review') return 'import'
+  	if (route.path === '/Analysis') return 'analyze'
+  	if (route.path === '/vsComputer') return 'computer'
+  	return 'analyze'
+  })
+
 
 </script>
 
@@ -49,7 +59,7 @@
     <button
       class="btn"
       :style="{ background: `linear-gradient(${bgColor('computer')})` }"
-      @click="setActive('computer')"
+      @click="gameClick()"
     >
       🤖 VS Computer
     </button>
@@ -57,7 +67,6 @@
     <button
       class="btn"
       :style="{ background: `linear-gradient(${bgColor('puzzles')})` }"
-      @click="setActive('puzzles')"
     >
       🧩 Puzzles
     </button>
