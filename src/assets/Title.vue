@@ -142,4 +142,28 @@
 		outline: 2px solid #faedcd;
 		outline-offset: 3px;
 	}
+
+	@media (max-width: 767px) {
+	  .title-container {
+	    flex-direction: row;
+	    flex-wrap: wrap;
+	    width: 100%;
+	    height: auto;
+	    margin: 0 0 1rem 0;
+	    padding: 0.75rem 1rem;
+	    justify-content: center;
+	    align-items: center;
+	    gap: 0.6rem;
+	  }
+	  .title {
+	    width: 100%;
+	    margin: 0 0 0.25rem 0;
+	    text-align: center;
+	  }
+	  button {
+	    margin-top: 0;
+	    flex: 1 1 auto;
+	    min-width: 6rem;
+	  }
+	}
 </style>

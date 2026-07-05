@@ -785,7 +785,7 @@
   }
 
   @media (min-width: 768px) {
-    .grid-layout { grid-template-columns: 1fr 1.5fr; }
+    .grid-layout { grid-template-columns: 1fr 1.5fr; gap: 1rem}
   }
 
   @media (min-width: 1200px) {
@@ -796,7 +796,7 @@
       position: relative;
       width: 100%;
       max-width: 600px;
-      margin: 0 auto;
+      margin: 0;
   }
 
   .chessboard { width: 100%; max-width: 600px; margin: 0 auto; }
@@ -804,13 +804,16 @@
   .board-area {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
     align-items: center;
   }
 
-  @media (min-width: 768px) {
-    .board-area { flex-direction: row; gap: 0.5rem; justify-content: center; align-items: flex-start; }
+  .board-area {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: center;
   }
+
 
   :deep(.cg-wrap) {
     overflow: hidden;
@@ -1110,34 +1113,21 @@
 
   /* --- Evaluation Bar --- */
   .evalbar {
-      width: 90%;
-      max-width: min(90vw, 35rem);
-      height: clamp(30px, 5vw, 40px);
-      position: relative;
-      overflow: hidden;
-  }
-
-  @media (min-width: 768px) {
-      .evalbar {
-          width: clamp(30px, 5vw, 40px);
-          height: 100%;
-          max-height: min(95vw, 36.5rem);
-          flex-shrink: 0;
-      }
+    width: clamp(20px, 4vw, 40px);
+    height: min(94.5vw, 37rem);
+    max-height: min(94.5vw, 37rem);
+    position: relative;
+    overflow: hidden;
+    flex-shrink: 0;
   }
 
   .evalbar-inner {
-      width: 100%;
-      height: 100%;
-      display: flex;
-      flex-direction: row;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
   }
 
-  @media (min-width: 768px) {
-      .evalbar-inner {
-          flex-direction: column;
-      }
-  }
 
   .blackeval, .whiteeval {
       width: 100%;
