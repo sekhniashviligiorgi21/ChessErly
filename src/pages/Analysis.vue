@@ -4,13 +4,16 @@
   import { TheChessboard } from 'vue3-chessboard'
   import 'vue3-chessboard/style.css'
   import Title from "../assets/Title.vue"
-  import SettingsPanel from "../assets/SettingsPanel.vue" // <-- Import new component
+  import SettingsPanel from "../assets/SettingsPanel.vue"
   import { startEngine, getEvaluation, cancelAnalysis } from "../engine/engine.js"
+  import { useRoute } from 'vue-router'
 
   onMounted(async () => {
     window.addEventListener('keydown', handleKeyDown)
       await startEngine();
-      await getAccuracy();
+      if(!route.query.moves){
+        await getAccuracy()
+      }
   });
 
   onBeforeUnmount(() => {
@@ -19,8 +22,8 @@
   })
 
   // State
+  const route = useRoute()
   const isSettingsOpen = ref(false)
-  const boardTheme = ref('brown') // Connect this to your board config later if supported
   const isFlipped = computed(() => (rotate.value / 180) % 2 === 1)
 
   const chess = new Chess()
@@ -239,13 +242,26 @@
   function drawBestArrow() {
     if (!showBestArrow.value || !boardAPI.value || !bestArrowSquares.value) return
     const { from, to } = bestArrowSquares.value
-    boardAPI.value.drawMove(from, to, 'blue')
+    boardAPI.value.drawMove(from, to, 'green')
   }
 
   async function onBoardCreated(api) {
     boardAPI.value = api
     chess.reset()
     boardAPI.value.setPosition(chess.fen())
+    if (route.query.moves) {
+      const importedUciList = route.query.moves.split('-')
+      await loadImportedGame(importedUciList)
+    }
+  }
+
+  async function loadImportedGame(uciList) {
+    for (const uci of uciList) {
+      const result = applyUciMove(uci)
+      if (!result) break
+      boardAPI.value.setPosition(chess.fen())
+      await getAccuracy()
+    }
   }
 
   async function handleBothMoves(move) {
@@ -644,7 +660,6 @@
     v-model:targetDepth="targetDepth"
     v-model:soundOn="soundOn"
     v-model:showBestArrow="showBestArrow"
-    v-model:boardTheme="boardTheme"
     @depthChanged="onDepthChange"
   />
 
