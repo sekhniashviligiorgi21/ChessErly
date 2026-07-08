@@ -10,15 +10,21 @@
 
   onMounted(async () => {
     window.addEventListener('keydown', handleKeyDown)
-      await startEngine();
-      if(!route.query.moves){
-        await getAccuracy()
-      }
+    window.addEventListener('click', closeContextMenu)
+    window.addEventListener('scroll', closeContextMenu, true)
+    reportTitle.value.style.backgroundColor = passiveColor.value
+    if (!route.query.moves){
+      await getAccuracy()
+    }
+    await startEngine();
   });
 
   onBeforeUnmount(() => {
     window.removeEventListener('keydown', handleKeyDown)
+    window.removeEventListener('click', closeContextMenu)
+    window.removeEventListener('scroll', closeContextMenu, true)
     clearTimeout(toastTimeout)
+    clearTimeout(longPressTimer)
   })
 
   // State
@@ -56,9 +62,41 @@
   const showBestArrow = ref(true)
   const bestArrowSquares = ref(null) 
   const toastMessage = ref('')
+  const displayMoves = ref(true)
+  const contextMenu = ref({ visible: false, x: 0, y: 0, nodeId: null })
+
+  // Imported player info (passed via router query from Review.vue)
+  const whiteName = ref('White')
+  const blackName = ref('Black')
+  const whiteRating = ref(null)
+  const blackRating = ref(null)
+  const hasPlayerInfo = ref(false)
+
+  if (route.query.white || route.query.black) {
+    hasPlayerInfo.value = true
+    if (route.query.white) whiteName.value = route.query.white
+    if (route.query.black) blackName.value = route.query.black
+    if (route.query.whiteRating) whiteRating.value = route.query.whiteRating
+    if (route.query.blackRating) blackRating.value = route.query.blackRating
+  }
+
+  const topPlayer = computed(() => (
+    isFlipped.value
+      ? { name: whiteName.value, rating: whiteRating.value, side: 'white' }
+      : { name: blackName.value, rating: blackRating.value, side: 'black' }
+  ))
+
+  const bottomPlayer = computed(() => (
+    isFlipped.value
+      ? { name: blackName.value, rating: blackRating.value, side: 'black' }
+      : { name: whiteName.value, rating: whiteRating.value, side: 'white' }
+  ))
+
+
+  let longPressTimer = null
+  let longPressTriggered = false
   let toastTimeout = null
   let audioCtx = null
-
   let accuracyDebounceTimer = null
   let lastPress = 0
 
@@ -139,6 +177,105 @@
     walk(moveTree, 1)
     return rows
   })
+
+  const activeColor = ref('#5e3c20')
+  const passiveColor = ref('#8d5b33')
+  const movesTitle = ref(null)
+  const reportTitle = ref(null)
+
+  function changeActiveToMoves(){
+    if (movesTitle.value){
+      movesTitle.value.style.backgroundColor = activeColor.value
+    }
+
+    if (reportTitle.value){
+     reportTitle.value.style.backgroundColor = passiveColor.value
+    }
+  }
+
+  function changeActiveToReport(){
+    if (reportTitle.value){
+      reportTitle.value.style.backgroundColor = activeColor.value
+    }
+
+    if (movesTitle.value){
+      movesTitle.value.style.backgroundColor = passiveColor.value
+    }
+  }
+
+  function deleteMove(nodeId) {
+    const node = nodeMap[nodeId]
+    if (!node || node.parent === null) return // can't delete the root
+
+    const parent = node.parent
+    const idx = parent.children.indexOf(node)
+    if (idx !== -1) parent.children.splice(idx, 1)
+
+    // collect this node + all its descendants so we can purge them from nodeMap
+    function collectIds(n, ids) {
+      ids.push(n.id)
+      for (const child of n.children) collectIds(child, ids)
+      return ids
+    }
+    const idsToRemove = collectIds(node, [])
+    const currentWasRemoved = idsToRemove.includes(currentNode.value.id)
+
+    for (const id of idsToRemove) delete nodeMap[id]
+
+    if (currentWasRemoved) {
+      // board was sitting somewhere inside the deleted line — snap back to the parent
+      jumpToNode(parent.id)
+    } else {
+      treeVersion.value++
+    }
+  }
+
+  function showContextMenu(x, y, nodeId) {
+    const menuWidth = 160
+    const menuHeight = 44
+    contextMenu.value = {
+      visible: true,
+      x: Math.min(x, window.innerWidth - menuWidth - 8),
+      y: Math.min(y, window.innerHeight - menuHeight - 8),
+      nodeId
+    }
+  }
+
+  function closeContextMenu() {
+    contextMenu.value.visible = false
+  }
+
+  function openContextMenu(event, nodeId) {
+    showContextMenu(event.clientX, event.clientY, nodeId)
+  }
+
+  function handleDeleteFromMenu() {
+    if (contextMenu.value.nodeId !== null) deleteMove(contextMenu.value.nodeId)
+    closeContextMenu()
+  }
+
+  // Long-press for mobile
+  function handleTouchStart(event, nodeId) {
+    longPressTriggered = false
+    longPressTimer = setTimeout(() => {
+      longPressTriggered = true
+      const touch = event.touches[0]
+      showContextMenu(touch.clientX, touch.clientY, nodeId)
+      if (navigator.vibrate) navigator.vibrate(10)
+    }, 500)
+  }
+
+  function cancelLongPress() {
+    clearTimeout(longPressTimer)
+  }
+
+  function handleCellClick(nodeId) {
+    if (longPressTriggered) {
+      longPressTriggered = false
+      return
+    }
+    jumpToNode(nodeId)
+  }
 
   const materialInfo = computed(() => {
     treeVersion.value
@@ -651,6 +788,61 @@
       treeVersion.value++
       getAccuracy()
   }
+
+  // Game report logic
+  const classificationOrder = ['brilliant', 'great', 'best', 'excellent', 'good', 'book', 'inaccuracy', 'mistake', 'blunder']
+
+  const classificationMeta = {
+    brilliant:  { label: 'Brilliant',  color: '#03aea7' },
+    great:      { label: 'Great',      color: '#4c8cb5' },
+    best:       { label: 'Best',       color: '#6ad13f' },
+    excellent:  { label: 'Excellent',  color: '#90bc36' },
+    good:       { label: 'Good',       color: '#8eae83' },
+    book:       { label: 'Book',       color: '#ad8760' },
+    inaccuracy: { label: 'Inaccuracy', color: '#f2bc43' },
+    mistake:    { label: 'Mistake',    color: '#f38800' },
+    blunder:    { label: 'Blunder',    color: '#FF0000' }
+  }
+
+  const accuracyWeights = {
+    brilliant: 100, great: 100, best: 100, book: 100,
+    excellent: 90, good: 80, inaccuracy: 30, mistake: 15, blunder: 0
+  }
+
+  const gameReportStats = computed(() => {
+    treeVersion.value
+
+    function emptyCounts() {
+      return classificationOrder.reduce((acc, key) => ({ ...acc, [key]: 0 }), {})
+    }
+
+    const white = { counts: emptyCounts(), weightedSum: 0, moveCount: 0 }
+    const black = { counts: emptyCounts(), weightedSum: 0, moveCount: 0 }
+
+    let current = moveTree.children[0] ?? null
+    let ply = 1 // ply 1 = white's 1st move, ply 2 = black's 1st move, etc.
+
+    while (current) {
+      const side = ply % 2 === 1 ? white : black
+
+      if (current.accuracy && side.counts.hasOwnProperty(current.accuracy)) {
+        side.counts[current.accuracy]++
+        side.weightedSum += accuracyWeights[current.accuracy] ?? 0
+        side.moveCount++
+      }
+
+      current = current.children[0] ?? null
+      ply++
+    }
+
+    const finalize = (side) => ({
+      counts: side.counts,
+      accuracy: side.moveCount > 0 ? (side.weightedSum / side.moveCount) : null
+    })
+
+    return { white: finalize(white), black: finalize(black) }
+  })
+
 </script>
 
 <template>
@@ -667,6 +859,11 @@
     <Title class="title-slot"/>
     <div class="board-area">
       <div class="board-wrapper" ref="boardRef">
+        <div class="player-bar" v-if="hasPlayerInfo">
+          <span class="player-color-dot" :class="topPlayer.side"></span>
+          <span class="player-name">{{ topPlayer.name }}</span>
+          <span class="player-rating" v-if="topPlayer.rating">{{ topPlayer.rating }}</span>
+        </div>
         <TheChessboard 
           @move="handleBothMoves" 
           @board-created="onBoardCreated" 
@@ -687,6 +884,12 @@
             <span v-for="(p, i) in materialInfo.capturedByWhite" :key="'cw'+i" class="captured-piece black">{{ pieceSymbol(p, 'b') }}</span>
             <span v-if="materialInfo.diff > 0" class="material-diff">+{{ materialInfo.diff }}</span>
           </div>
+        </div>
+
+        <div class="player-bar bottom" v-if="hasPlayerInfo">
+          <span class="player-color-dot" :class="bottomPlayer.side"></span>
+          <span class="player-name">{{ bottomPlayer.name }}</span>
+          <span class="player-rating" v-if="bottomPlayer.rating">{{ bottomPlayer.rating }}</span>
         </div>
         
         <div class="boardtools">
@@ -756,10 +959,12 @@
           </div>
         </div>
       </div>
-      
       <div class="moves">
-        <h2 class="movehistory">Move history</h2>
-        <div class="moveslist" ref="movesListRef">
+        <div class="movesButtons">
+          <button class="movehistory" @click="displayMoves=true; changeActiveToMoves()" ref="movesTitle">Moves</button>
+          <button class="movehistory" @click="displayMoves=false; changeActiveToReport()" ref="reportTitle">Report</button>
+        </div>
+        <div class="moveslist" v-if="displayMoves" ref="movesListRef">
           <template v-for="row in renderedMoves" :key="row.key">
             <div class="move-row" :class="{ variant: row.depth > 0 }" :style="{ '--indent': `${row.depth * 1.05}rem` }">
               <div
@@ -767,7 +972,11 @@
                 :key="cell ? cell.key : `${row.key}-empty-${index}`"
                 class="move-cell"
                 :class="[{ active: cell && cell.node === currentNode, variant: cell && cell.variant }, { empty: !cell }]"
-                @click="cell && jumpToNode(cell.node.id)"
+                @click="cell && handleCellClick(cell.node.id)"
+                @contextmenu.prevent="cell && openContextMenu($event, cell.node.id)"
+                @touchstart="cell && handleTouchStart($event, cell.node.id)"
+                @touchend="cancelLongPress"
+                @touchmove="cancelLongPress"
               >
                 <template v-if="cell">
                   <span v-if="cell.showNum" class="move-num">{{ cell.displayNum }}{{ cell.isWhite ? '.' : '...' }}</span>
@@ -778,9 +987,70 @@
             </div>
           </template>
         </div>
+      <div class="report" v-else-if="!displayMoves">
+        <div class="report-columns">
+          <div class="report-col">
+            <div class="report-side-header">
+              <span class="side-swatch white-swatch"></span>
+              <span>White</span>
+            </div>
+            <div class="accuracy-score" v-if="gameReportStats.white.accuracy !== null">
+              {{ gameReportStats.white.accuracy.toFixed(1) }}<span class="accuracy-percent">%</span>
+            </div>
+            <div class="accuracy-score empty" v-else>—</div>
+
+            <div
+              v-for="key in classificationOrder"
+              :key="'w-' + key"
+              class="report-row"
+              :class="{ dim: gameReportStats.white.counts[key] === 0 }"
+            >
+              <img :src="accuracySymbol(key)" class="report-row-icon" />
+              <span class="report-row-label" :style="{ color: classificationMeta[key].color }">{{ classificationMeta[key].label }}</span>
+              <span class="report-row-count">{{ gameReportStats.white.counts[key] }}</span>
+            </div>
+          </div>
+
+          <div class="report-col">
+            <div class="report-side-header">
+              <span class="side-swatch black-swatch"></span>
+              <span>Black</span>
+            </div>
+            <div class="accuracy-score" v-if="gameReportStats.black.accuracy !== null">
+              {{ gameReportStats.black.accuracy.toFixed(1) }}<span class="accuracy-percent">%</span>
+            </div>
+            <div class="accuracy-score empty" v-else>—</div>
+
+            <div
+              v-for="key in classificationOrder"
+              :key="'b-' + key"
+              class="report-row"
+              :class="{ dim: gameReportStats.black.counts[key] === 0 }"
+            >
+              <img :src="accuracySymbol(key)" class="report-row-icon" />
+              <span class="report-row-label" :style="{ color: classificationMeta[key].color }">{{ classificationMeta[key].label }}</span>
+              <span class="report-row-count">{{ gameReportStats.black.counts[key] }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
       </div>
     </div>
   </div>
+
+  <Teleport to="body">
+    <div
+      v-if="contextMenu.visible"
+      class="context-menu"
+      :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
+      @click.stop
+    >
+      <button class="context-menu-item delete" @click="handleDeleteFromMenu">
+        Delete move
+      </button>
+    </div>
+  </Teleport>
+
   <Transition name="toast-fade">
     <div v-if="toastMessage" class="toast">{{ toastMessage }}</div>
   </Transition>
@@ -858,6 +1128,53 @@
     border-radius: 8px;
   }
 
+  /* --- Player bar (imported game info) --- */
+  .player-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.7rem;
+    margin-bottom: 0.4rem;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.22);
+    color: #f4f0e3;
+    font-family: 'Inter', sans-serif;
+    font-size: clamp(0.82rem, 1.8vw, 0.95rem);
+    max-width: min(90vw, 35rem);
+    box-sizing: border-box;
+  }
+
+  .player-bar.bottom { margin-top: 0.4rem; margin-bottom: 0; }
+
+  .player-color-dot {
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3);
+  }
+
+  .player-color-dot.white { background: #f4f0e3; }
+  .player-color-dot.black { background: #1a1a1a; }
+
+  .player-name {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .player-rating {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.8em;
+    color: rgba(244, 240, 227, 0.75);
+    margin-left: auto;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 6px;
+    padding: 0.05rem 0.4rem;
+    flex-shrink: 0;
+  }
+
   /* Moves History Layout */
   .moves {
     margin-top: 10px;
@@ -893,6 +1210,12 @@
     scroll-behavior: smooth;
   }
 
+  .movesButtons{
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+
   .move-row {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -921,6 +1244,8 @@
     border: 1px solid rgba(255, 255, 255, 0.06);
     box-sizing: border-box;
     overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
   }
 
   .move-cell:hover {
@@ -968,9 +1293,9 @@
 
   .analyzis-header {
     display: flex;
-    justify-content: space-between;
+    justify-content: flex-end;
     align-items: center;
-    gap: 0.75rem;
+    gap: 3rem;
     padding: 1rem 1rem 0.5rem;
   }
 
@@ -1016,10 +1341,14 @@
     color: #f5f5dc;
     font-weight: 700;
     text-transform: uppercase;
-    margin: 12px 0;
+    margin: 20px 0;
     text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
     letter-spacing: 2.5px;
-    font-size: clamp(1.3rem, 3vw, 1.6rem);
+    padding: 0.5rem 1.5rem;
+    border-radius: 5px;
+    background-color: #5e3c20;
+    border: none;
+    font-size: clamp(1rem, 2vw, 1.2rem);
   }
 
   .boardtools {
@@ -1177,8 +1506,8 @@
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      font-size: clamp(0.9rem, 2vw, 1.1rem);
-      font-weight: 700;
+      font-size: clamp(0.8rem, 1.2vw, 1rem);
+      font-weight: 500;
       color: #fff8ef;
       text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.6);
       background: rgba(0, 0, 0, 0.3);
@@ -1302,5 +1631,144 @@
   .toast-fade-enter-from, .toast-fade-leave-to {
       opacity: 0;
       transform: translateX(-50%) translateY(8px);
+  }
+
+  .context-menu {
+    position: fixed;
+    z-index: 2000;
+    background: #2a2a2a;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+    min-width: 140px;
+  }
+
+  .context-menu-item {
+    display: block;
+    width: 100%;
+    padding: 0.65rem 1rem;
+    background: transparent;
+    border: none;
+    color: #f4f0e3;
+    font-size: 0.9rem;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .context-menu-item.delete { color: #ff6b6b; }
+  .context-menu-item.delete:hover { background: rgba(255, 60, 60, 0.2); }
+
+  .report {
+    padding: 1rem;
+    box-sizing: border-box;
+  }
+
+  .report-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.6rem;
+  }
+
+  .report-col {
+    min-width: 0;
+    background: linear-gradient(135deg, #a57548, #7d5530);
+    border-radius: 14px;
+    padding: 0.8rem 0.5rem;
+    box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.25);
+    box-sizing: border-box;
+  }
+
+  .report-side-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    font-family: serif;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: #f5f5dc;
+    font-size: 0.78rem;
+    margin-bottom: 0.5rem;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+  }
+
+  .side-swatch {
+    width: 0.65rem;
+    height: 0.65rem;
+    border-radius: 50%;
+    display: inline-block;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3);
+    flex-shrink: 0;
+  }
+
+  .white-swatch { background: #f4f0e3; }
+  .black-swatch { background: #1a1a1a; }
+
+  .accuracy-score {
+    font-family: "JetBrains Mono", monospace;
+    font-size: clamp(1.3rem, 6vw, 1.8rem);
+    font-weight: 700;
+    color: #a8d97a;
+    text-align: center;
+    margin: 0.4rem 0 0.7rem;
+    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  }
+
+  .accuracy-score.empty {
+    color: rgba(245, 245, 220, 0.4);
+    font-size: 1.2rem;
+  }
+
+  .accuracy-percent {
+    font-size: 0.6em;
+    opacity: 0.75;
+  }
+
+  .report-row {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.3rem;
+    border-radius: 8px;
+    transition: background 0.15s ease;
+    min-width: 0;
+  }
+
+  .report-row:hover {
+    background: rgba(0, 0, 0, 0.12);
+  }
+
+  .report-row.dim {
+    opacity: 0.35;
+  }
+
+  .report-row-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
+
+  .report-row-label {
+    flex: 1;
+    font-size: 0.76rem;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .report-row-count {
+    font-family: "JetBrains Mono", monospace;
+    font-weight: 700;
+    color: #f4f0e3;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 6px;
+    padding: 0.05rem 0.4rem;
+    font-size: 0.76rem;
+    min-width: 1.3rem;
+    text-align: center;
+    flex-shrink: 0;
   }
 </style>

@@ -216,11 +216,11 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null) {
         if (move) {
             if (isBook) {
                 accuracy = "book"
-            } else if (best_move === move && top_moves.length === 2 && brilliant_loss > 100 && best11 !== null  && best11 !== best_move) {
+            } else if (best_move === move && top_moves.length >= 2 && brilliant_loss > 100 && best11 !== null  && best11 !== best_move) {
                 // SF18 agrees it's the best move, the 2nd option is >150cp worse,
                 // and SF11 (weaker engine) didn't find it — that's brilliant
                 accuracy = "brilliant"
-            } else if (best_move === move && top_moves.length === 2 && brilliant_loss > 100) {
+            } else if (best_move === move && top_moves.length >= 2 && brilliant_loss > 100) {
                 accuracy = "great"
             } else if (best_move == move || loss < 15) {
                 accuracy = "best"
@@ -300,7 +300,6 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null) {
 
 
 
-
         return {
             depth: currentDepth,
             move_played: move,
@@ -312,7 +311,7 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null) {
             best_line,
             excellent_line,
             third_line,
-            moves_list: afterMoves
+            moves_list: afterMoves,
         }
     }
 

@@ -1,5 +1,5 @@
 <script setup>
-  import { ref } from 'vue'
+  import { ref, computed } from 'vue'
   import Title from '../assets/Title.vue'
   import { Chess } from 'chess.js'
   import { useRouter } from 'vue-router'
@@ -19,6 +19,81 @@
   const moveslist = ref([])
   const chess = new Chess()
   const importSite = ref('chess.com')
+  const importMode = ref('last') // 'last' | 'range'
+
+  function normalizeLichessLine(line) {
+    const lGame = JSON.parse(line)
+
+    let wRes = 'draw'
+    let bRes = 'draw'
+    if (lGame.winner === 'white') { wRes = 'win'; bRes = 'lose' }
+    else if (lGame.winner === 'black') { wRes = 'lose'; bRes = 'win' }
+
+    return {
+      pgn: lGame.pgn || "",
+      time_class: lGame.speed || "unknown",
+      white: {
+        username: lGame.players?.white?.user?.name || "Anonymous",
+        rating: lGame.players?.white?.rating || 0,
+        result: wRes
+      },
+      black: {
+        username: lGame.players?.black?.user?.name || "Anonymous",
+        rating: lGame.players?.black?.rating || 0,
+        result: bRes
+      }
+    }
+  }
+
+  async function fetchChessComRange(user, yr, mo) {
+    const paddedMonth = String(mo).padStart(2, '0')
+    const res = await fetch(`https://api.chess.com/pub/player/${user}/games/${yr}/${paddedMonth}`)
+    if (!res.ok) throw new Error('Failed to fetch from Chess.com')
+    const data = await res.json()
+    return data.games || []
+  }
+
+  async function fetchChessComLast(user) {
+    const archivesRes = await fetch(`https://api.chess.com/pub/player/${user}/games/archives`)
+    if (!archivesRes.ok) throw new Error('Failed to fetch archives from Chess.com')
+    const archivesData = await archivesRes.json()
+    const archives = archivesData.archives || []
+    if (!archives.length) throw new Error('No games found for this player.')
+
+    const lastArchiveUrl = archives[archives.length - 1]
+    const gamesRes = await fetch(lastArchiveUrl)
+    if (!gamesRes.ok) throw new Error('Failed to fetch latest games from Chess.com')
+    const gamesData = await gamesRes.json()
+    const monthGames = gamesData.games || []
+    if (!monthGames.length) throw new Error('No games found in the latest archive.')
+
+    return [monthGames[monthGames.length - 1]]
+  }
+
+  async function fetchLichessRange(user, yr, mo) {
+    const startDate = new Date(Date.UTC(yr, mo - 1, 1)).getTime()
+    const endDate = new Date(Date.UTC(yr, mo, 1)).getTime()
+
+    const res = await fetch(`https://lichess.org/api/games/user/${user}?since=${startDate}&until=${endDate}&pgnInJson=true`, {
+      headers: { 'Accept': 'application/x-ndjson' }
+    })
+    if (!res.ok) throw new Error('Failed to fetch from Lichess')
+
+    const text = await res.text()
+    if (!text.trim()) return []
+    return text.trim().split('\n').map(normalizeLichessLine)
+  }
+
+  async function fetchLichessLast(user) {
+    const res = await fetch(`https://lichess.org/api/games/user/${user}?max=1&pgnInJson=true`, {
+      headers: { 'Accept': 'application/x-ndjson' }
+    })
+    if (!res.ok) throw new Error('Failed to fetch from Lichess')
+
+    const text = await res.text()
+    if (!text.trim()) throw new Error('No games found for this player.')
+    return [normalizeLichessLine(text.trim().split('\n')[0])]
+  }
 
   async function chessImport() {
     loading.value = true
@@ -27,64 +102,27 @@
     selectedGame.value = null
 
     try {
-      if (!year.value || month.value === 'month' || !username.value) {
-        throw new Error('Please fill in username, year, and month.')
-      }
+      if (!username.value) throw new Error('Enter a username first.')
 
-      const paddedMonth = String(month.value).padStart(2, '0')
-
-      if (importSite.value === 'chess.com') {
-        // --- CHESS.COM FLOW ---
-        const res = await fetch(`https://api.chess.com/pub/player/${username.value}/games/${year.value}/${paddedMonth}`)
-        if (!res.ok) throw new Error('Failed to fetch from Chess.com')
-        const data = await res.json()
-        games.value = data.games || []
-
+      if (importMode.value === 'last') {
+        games.value = importSite.value === 'chess.com'
+          ? await fetchChessComLast(username.value)
+          : await fetchLichessLast(username.value)
       } else {
-        // --- LICHESS FLOW ---
-        // 1. Calculate UNIX timestamps for the start and end of the chosen month
-        const startDate = new Date(Date.UTC(year.value, month.value - 1, 1)).getTime()
-        const endDate = new Date(Date.UTC(year.value, month.value, 1)).getTime()
-
-        // 2. Add pgnInJson=true to get the PGNs, and use the timestamp boundaries
-        const res = await fetch(`https://lichess.org/api/games/user/${username.value}?since=${startDate}&until=${endDate}&pgnInJson=true`, {
-          headers: { 'Accept': 'application/x-ndjson' }
-        })
-        if (!res.ok) throw new Error('Failed to fetch from Lichess')
-        
-        const text = await res.text()
-        
-        if (text.trim()) {
-          // 3. Normalize Lichess data to act exactly like Chess.com data
-          games.value = text.trim().split('\n').map(line => {
-            const lGame = JSON.parse(line)
-            
-            // Map Lichess winners to Chess.com result strings
-            let wRes = 'draw'
-            let bRes = 'draw'
-            if (lGame.winner === 'white') { wRes = 'win'; bRes = 'lose' }
-            else if (lGame.winner === 'black') { wRes = 'lose'; bRes = 'win' }
-
-            return {
-              pgn: lGame.pgn || "", 
-              time_class: lGame.speed || "unknown",
-              white: {
-                username: lGame.players?.white?.user?.name || "Anonymous",
-                rating: lGame.players?.white?.rating || 0,
-                result: wRes
-              },
-              black: {
-                username: lGame.players?.black?.user?.name || "Anonymous",
-                rating: lGame.players?.black?.rating || 0,
-                result: bRes
-              }
-            }
-          })
-        } else {
-          games.value = []
+        if (!year.value || month.value === 'month') {
+          throw new Error('Pick a year and month.')
         }
+        games.value = importSite.value === 'chess.com'
+          ? await fetchChessComRange(username.value, year.value, month.value)
+          : await fetchLichessRange(username.value, year.value, month.value)
       }
 
+      if (games.value.length === 0) {
+        error.value = 'No games found for that search.'
+      } else if (importMode.value === 'last') {
+        // Only one candidate in "last game" mode — select it straight away
+        selectGame(games.value[0])
+      }
     } catch (e) {
       error.value = e.message
       console.error(e)
@@ -165,43 +203,85 @@
   
     router.push({ 
       path: '/', 
-      query: { moves: moveString } 
+      query: { 
+        moves: moveString,
+        white: selectedGame.value.white.username,
+        black: selectedGame.value.black.username,
+        whiteRating: selectedGame.value.white.rating,
+        blackRating: selectedGame.value.black.rating
+      } 
     })
   }
 </script>
 
 <template>
-  <div class="grid-layout">
+  <div class="page-layout">
     <Title/>
     <div class="content-area">
-      <div class="import-container">
-        <h1 class="import-title">Import your game</h1>
-        
-        <!-- Fixed: Bound v-model directly to select element -->
-        <select v-model="importSite" class="website-input">
-          <option value="chess.com">chess.com</option>
-          <option value="lichess">lichess</option>
-        </select>
-        
+      <div class="import-card">
+        <div class="card-header">
+          <h1 class="import-title">Import a game</h1>
+          <p class="import-subtitle">Pull a game straight from Chess.com or Lichess for analysis.</p>
+        </div>
+
+        <div class="site-toggle">
+          <button
+            class="site-btn"
+            :class="{ active: importSite === 'chess.com' }"
+            @click="importSite = 'chess.com'"
+          >Chess.com</button>
+          <button
+            class="site-btn"
+            :class="{ active: importSite === 'lichess' }"
+            @click="importSite = 'lichess'"
+          >Lichess</button>
+        </div>
+
+        <div class="mode-toggle">
+          <button
+            class="mode-btn"
+            :class="{ active: importMode === 'last' }"
+            @click="importMode = 'last'"
+          >Last game</button>
+          <button
+            class="mode-btn"
+            :class="{ active: importMode === 'range' }"
+            @click="importMode = 'range'"
+          >By month</button>
+        </div>
+
         <div class="controls">
-          <input v-model="username" placeholder="Username" class="input" />
-          <input v-model="year" placeholder="Enter the year" class="input" />
-          
-          <select v-model="month" class="input">
-            <option value="month" disabled>month</option>
-            <option v-for="m in 12" :key="m" :value="m">
-              {{ String(m).padStart(2, '0') }}
-            </option>
-          </select>
-          
-          <button class="import_btn" @click="chessImport" :disabled="loading">
-            {{ loading ? 'Loading...' : 'Import' }}
+          <label class="field">
+            <span class="field-label">Username</span>
+            <input v-model="username" placeholder="e.g. magnuscarlsen" class="input" @keyup.enter="chessImport" />
+          </label>
+
+          <template v-if="importMode === 'range'">
+            <label class="field field-small">
+              <span class="field-label">Year</span>
+              <input v-model="year" placeholder="2026" class="input" @keyup.enter="chessImport" />
+            </label>
+
+            <label class="field field-small">
+              <span class="field-label">Month</span>
+              <select v-model="month" class="input">
+                <option value="month" disabled>Select</option>
+                <option v-for="m in 12" :key="m" :value="m">
+                  {{ String(m).padStart(2, '0') }}
+                </option>
+              </select>
+            </label>
+          </template>
+
+          <button class="import-btn" @click="chessImport" :disabled="loading">
+            <span v-if="loading" class="spinner"></span>
+            {{ loading ? 'Fetching…' : (importMode === 'last' ? 'Get last game' : 'Search games') }}
           </button>
         </div>
-        
+
         <div v-if="error" class="error">{{ error }}</div>
-        
-        <div v-if="games.length" class="games-list">
+
+        <div v-if="games.length > 1" class="games-list">
           <div 
             v-for="(game, i) in games" 
             :key="i" 
@@ -212,14 +292,19 @@
             <span class="color-dot" :class="formatResult(game).myColor.toLowerCase()"></span>
             <span class="opponent">vs {{ formatResult(game).opponent }}</span>
             <span class="rating">{{ formatResult(game).myRating }} vs {{ formatResult(game).oppRating }}</span>
-            <span class="result" :class="formatResult(game).result">{{ formatResult(game).result }}</span>
+            <span class="result" :class="formatResult(game).result === '1-0' ? 'win' : (formatResult(game).result === '0-1' ? 'loss' : 'draw')">{{ formatResult(game).result }}</span>
             <span class="time-class">{{ game.time_class }}</span>
           </div>
         </div>
         
         <div v-if="selectedGame" class="selection-bar">
-          <span class="selected-msg">✓ Game selected</span>
-          <button class="analyse-btn" @click="analyseGame()">Analyse</button>
+          <div class="selection-info">
+            <span class="selected-msg">Game ready</span>
+            <span class="selection-players">
+              {{ selectedGame.white.username }} ({{ selectedGame.white.rating }}) vs {{ selectedGame.black.username }} ({{ selectedGame.black.rating }})
+            </span>
+          </div>
+          <button class="analyse-btn" @click="analyseGame()">Analyse →</button>
         </div>
         <div v-else-if="games.length && !loading" class="empty">
           No game selected yet.
@@ -230,66 +315,179 @@
 </template>
 
 <style scoped>
-  .grid-layout {
-    padding: 1rem;
+  @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap');
+
+  .page-layout {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    padding: clamp(0.5rem, 3vw, 1rem);
     display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 1.5rem;
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+    justify-self: center;
+    max-width: 1200px;
     margin: 0 auto;
+    box-sizing: border-box;
   }
+
+  @media (min-width: 768px) {
+    .page-layout {
+      grid-template-columns: auto 1fr;
+      gap: 1.5rem;
+    }
+  }
+
   .content-area {
     display: flex;
-    flex-direction: row;
-    align-items: flex-start;
-    gap: 1.5rem;
+    justify-content: center;
     width: 100%;
+    min-width: 0;
   }
-  .import-container {
+
+  .import-card {
     display: flex;
-    padding: 1rem;
-    align-items: center;
     flex-direction: column;
     gap: 1rem;
-    border: 1px solid #8c613f;
-    border-radius: 20px;
-    background-color: #83542f;
+    padding: clamp(1.25rem, 3vw, 1.75rem);
+    width: 100%;
+    max-width: 30rem;
+    box-sizing: border-box;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 18px;
+    background: linear-gradient(145deg, #8b5a32, #6d4524);
+    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.1);
   }
+
+  .card-header { text-align: center; }
+
   .import-title {
-    text-align: center;
+    font-family: serif;
     color: #f5f5dc;
+    font-weight: 700;
+    text-transform: uppercase;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+    letter-spacing: 2px;
+    font-size: clamp(1.3rem, 3vw, 1.7rem);
+    margin: 0 0 0.4rem;
   }
-  .website-input {
-    padding: 0.3rem;
-    border-radius: 4px;
-    background: #1e1e1e;
-    color: white;
-    border: 1px solid #444;
+
+  .import-subtitle {
+    color: rgba(244, 240, 227, 0.72);
+    font-size: 0.85rem;
+    margin: 0;
   }
-  .controls {
+
+  .site-toggle, .mode-toggle {
     display: flex;
     gap: 0.5rem;
-    flex-wrap: wrap;
-    justify-content: center;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 0.3rem;
+    border-radius: 10px;
   }
-  .input {
-    padding: 0.4rem 0.6rem;
-    border-radius: 6px;
-    border: 1px solid #444;
-    background: #1e1e1e;
-    color: white;
-  }
-  .import_btn {
-    padding: 0.4rem 1rem;
-    border-radius: 6px;
-    background: #343f2a;
-    color: #fff;
+
+  .site-btn, .mode-btn {
+    flex: 1;
+    padding: 0.5rem 0.6rem;
     border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: rgba(244, 240, 227, 0.65);
+    font-weight: 600;
+    font-size: 0.85rem;
     cursor: pointer;
+    transition: all 0.2s ease;
   }
-  .import_btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+
+  .site-btn:hover, .mode-btn:hover { color: #f4f0e3; }
+
+  .site-btn.active, .mode-btn.active {
+    background: #5e3c20;
+    color: #f5f5dc;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
   }
+
+  .controls {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    align-items: flex-end;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    flex: 1 1 10rem;
+    min-width: 0;
+  }
+
+  .field-small { flex: 1 1 5rem; }
+
+  .field-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: rgba(244, 240, 227, 0.65);
+  }
+
+  .input {
+    padding: 0.55rem 0.7rem;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(0, 0, 0, 0.25);
+    color: #f4f0e3;
+    font-size: 0.9rem;
+    box-sizing: border-box;
+    width: 100%;
+  }
+
+  .input:focus {
+    outline: none;
+    border-color: rgba(106, 209, 63, 0.6);
+    box-shadow: 0 0 0 2px rgba(106, 209, 63, 0.2);
+  }
+
+  .import-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1.1rem;
+    border-radius: 8px;
+    background: #41692e;
+    color: #f4f0e3;
+    border: none;
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background 0.2s ease;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+
+  .import-btn:hover:not(:disabled) { background: #4e824e; }
+  .import-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  .spinner {
+    width: 0.85rem;
+    height: 0.85rem;
+    border-radius: 50%;
+    border: 2px solid rgba(244, 240, 227, 0.35);
+    border-top-color: #f4f0e3;
+    animation: spin 0.7s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .error {
+    color: #ffb0a8;
+    background: rgba(255, 60, 60, 0.12);
+    border: 1px solid rgba(255, 100, 90, 0.3);
+    border-radius: 8px;
+    padding: 0.5rem 0.7rem;
+    font-size: 0.85rem;
+  }
+
   .games-list {
     display: flex;
     flex-direction: column;
@@ -298,94 +496,129 @@
     overflow-y: auto;
     overflow-x: hidden;
     scrollbar-width: thin;
-    scrollbar-color: #353e2a #1e1e1e;
+    scrollbar-color: rgba(194, 197, 170, 0.4) rgba(0, 0, 0, 0.2);
     width: 100%;
+    box-sizing: border-box;
   }
+
   .game-row {
     display: flex;
     align-items: center;
-    gap: 1rem;
-    padding: 0.5rem 0.75rem;
+    gap: 0.75rem;
+    padding: 0.55rem 0.75rem;
     border-radius: 8px;
-    background: #1e1e1e;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid transparent;
     cursor: pointer;
-    transition: background 0.2s;
-    color: white;
+    transition: background 0.15s ease, border-color 0.15s ease;
+    color: #f4f0e3;
   }
-  .game-row:hover {
-    background: #2a2a2a;
-  }
+
+  .game-row:hover { background: rgba(0, 0, 0, 0.3); }
+
   .game-row.selected {
-    background: #2a3d2a;
-    border: 1px solid #5c9e5c;
+    background: rgba(106, 209, 63, 0.12);
+    border-color: rgba(106, 209, 63, 0.5);
   }
+
   .color-dot {
     width: 10px;
     height: 10px;
     border-radius: 50%;
     flex-shrink: 0;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25);
   }
-  .color-dot.white {
-    background: #fff;
-  }
-  .color-dot.black {
-    background: #555;
-    border: 1px solid #888;
-  }
+
+  .color-dot.white { background: #f4f0e3; }
+  .color-dot.black { background: #1a1a1a; }
+
   .opponent {
     flex: 1;
-    font-weight: 500;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
+
   .rating {
-    color: #aaa;
-    font-size: 0.85rem;
-  }
-  .time-class {
-    color: #aaa;
+    font-family: "JetBrains Mono", monospace;
+    color: rgba(244, 240, 227, 0.6);
     font-size: 0.8rem;
+    flex-shrink: 0;
+  }
+
+  .time-class {
+    color: rgba(244, 240, 227, 0.55);
+    font-size: 0.78rem;
     text-transform: capitalize;
+    flex-shrink: 0;
   }
+
   .result {
-    font-weight: bold;
-    font-size: 0.9rem;
+    font-weight: 700;
+    font-size: 0.85rem;
+    flex-shrink: 0;
   }
-  .error {
-    color: #ff4a4a;
-  }
+
+  .result.win { color: #6ad13f; }
+  .result.loss { color: #ff6b6b; }
+  .result.draw { color: #f2bc43; }
+
   .selection-bar {
     display: flex;
-    padding: 0.6rem 0.75rem;
-    background: #1e1e1e;
-    border-radius: 8px;
-    border: 1px solid #5c9e5c;
-    width: 100%;
-    height: auto;
+    flex-wrap: wrap;
+    gap: 0.75rem;
     align-items: center;
-    justify-content: center;
-    gap: 2rem;
+    justify-content: space-between;
+    padding: 0.7rem 0.9rem;
+    background: rgba(106, 209, 63, 0.12);
+    border-radius: 10px;
+    border: 1px solid rgba(106, 209, 63, 0.4);
   }
+
+  .selection-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+  }
+
   .selected-msg {
-    color: #5c9e5c;
-    font-weight: 500;
+    color: #a8d97a;
+    font-weight: 700;
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
-  .empty {
-    color: #5d9e5d;
-    padding: 0.6rem 0.75rem;
-    background: #1e1e1e;
-    border-radius: 8px;
-    border: 1px solid #5c9e5c;
+
+  .selection-players {
+    color: #f4f0e3;
+    font-size: 0.82rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
+
   .analyse-btn {
-    width: 80px;
-    height: 25px;
-    border-radius: 5px;
-    font-family: sans-serif;
-    color: #fefefe;
-    background-color: #2a3d2a;
+    padding: 0.5rem 1.1rem;
+    border-radius: 8px;
+    font-weight: 700;
+    color: #f4f0e3;
+    background: #41692e;
     border: none;
     cursor: pointer;
+    transition: background 0.2s ease;
+    flex-shrink: 0;
   }
-  .analyse-btn:hover {
-    background-color: #4e824e;
+
+  .analyse-btn:hover { background: #4e824e; }
+
+  .empty {
+    color: rgba(244, 240, 227, 0.6);
+    text-align: center;
+    padding: 0.7rem;
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 8px;
+    font-size: 0.85rem;
   }
 </style>
