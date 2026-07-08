@@ -13,10 +13,10 @@
     window.addEventListener('click', closeContextMenu)
     window.addEventListener('scroll', closeContextMenu, true)
     reportTitle.value.style.backgroundColor = passiveColor.value
+    await startEngine();
     if (!route.query.moves){
       await getAccuracy()
     }
-    await startEngine();
   });
 
   onBeforeUnmount(() => {
