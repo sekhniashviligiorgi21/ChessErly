@@ -773,7 +773,6 @@
       for (const uci of uciList) {
         const result = applyUciMove(uci)
         if (!result) break
-        boardAPI.value.setPosition(chess.fen())
         await getAccuracy()
         importProgress.value.current++
       }
@@ -806,7 +805,7 @@
 
   const accuracyWeights = {
     brilliant: 100, great: 100, best: 100, book: 100,
-    excellent: 90, good: 80, inaccuracy: 30, mistake: 15, blunder: 0
+    excellent: 90, good: 80, inaccuracy: 20, mistake: 10, blunder: 0
   }
 
   const gameReportStats = computed(() => {
