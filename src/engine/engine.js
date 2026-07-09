@@ -196,7 +196,7 @@ function analyzePosition(moves, depth, onUpdate = null, runsf11 = false) {
         sf.postMessage(`go depth ${depth}`)
         if (runsf11) {
             sf11.postMessage(moves.length > 0 ? `position startpos moves ${moves.join(" ")}` : "position startpos")
-            sf11.postMessage(`go depth 9`)
+            sf11.postMessage(`go depth 10`)
         }
     })
 }
@@ -244,11 +244,11 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null) {
         if (move) {
             if (isBook) {
                 accuracy = "book"
-            } else if (best_move === move && top_moves.length >= 2 && brilliant_loss > 100 && best11 !== null  && best11 !== best_move) {
+            } else if (best_move === move && top_moves.length >= 2 && brilliant_loss > 150 && best11 !== null  && best11 !== best_move) {
                 // SF18 agrees it's the best move, the 2nd option is >150cp worse,
                 // and SF11 (weaker engine) didn't find it — that's brilliant
                 accuracy = "brilliant"
-            } else if (best_move === move && top_moves.length >= 2 && brilliant_loss > 100) {
+            } else if (best_move === move && top_moves.length >= 2 && brilliant_loss > 150) {
                 accuracy = "great"
             } else if (best_move == move || loss < 15) {
                 accuracy = "best"
@@ -267,16 +267,34 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null) {
 
 
         // handling accuracy in special occasions
-        if (eval_after?.type == "mate"){
-            if (eval_before?.value <= -700 || eval_before?.value >= 700){
-                accuracy = "inaccuracy" 
-            }
-            if (eval_before?.value <= -400 || eval_before?.value >= 400){
-                accuracy = "mistake"
-            } 
+        // --- Special-case handling around forced mate ---
+        // eval_before/eval_after are always in White's perspective, so "good for the
+        // mover" depends on side_to_move — a raw magnitude check isn't enough on its own.
+        const moverIsWhite = side_to_move === "w"
 
-            if (eval_before?.type === "cp") {
-               accuracy = "blunder"
+        if (eval_after?.type === "mate") {
+            const moverDeliversMate = moverIsWhite ? eval_after.value > 0 : eval_after.value < 0
+
+            if (moverDeliversMate) {
+                // Forcing mate is never worse than "best". If the 2nd-best line here
+                // doesn't also force mate, this move is uniquely decisive — treat it
+                // the same way a normal brilliant_loss spike would be treated.
+                if (best_move === move && top_moves.length >= 2 && top_moves[1]?.score?.type !== "mate") {
+                    accuracy = (best11 !== null && best11 !== best_move) ? "brilliant" : "great"
+                }
+            } else if (eval_before?.type === "cp") {
+                // Mover blundered into getting mated. Only soften the label if they
+                // were already in a heavily lost position before this move.
+                const alreadyLostBig = moverIsWhite ? eval_before.value <= -700 : eval_before.value >= 700
+                const alreadyLostModerate = moverIsWhite ? eval_before.value <= -400 : eval_before.value >= 400
+
+                if (alreadyLostBig) {
+                    accuracy = "inaccuracy"
+                } else if (alreadyLostModerate) {
+                    accuracy = "mistake"
+                } else {
+                    accuracy = "blunder"
+                }
             }
         }
 
@@ -290,10 +308,9 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null) {
                     accuracy = "blunder"
                 }
             }
-            if (eval_before?.value <= -800 && eval_after?.value <= -300 && eval_after?.value >= -600){
+            if (eval_before?.value <= -800 && eval_after?.value <= -300 && eval_after?.value >= -600) {
                 accuracy = "mistake"
-            }
-            if (eval_before?.value <= -800 && eval_after?.value > eval_before?.value + 150 && eval_after?.value <= -600){
+            } else if (eval_before?.value <= -800 && eval_after?.value > eval_before?.value + 150 && eval_after?.value <= -600) {
                 accuracy = "inaccuracy"
             }
         }
@@ -308,22 +325,22 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null) {
                     accuracy = "blunder"
                 }
             }
-            if (eval_before?.value >= 800 && eval_after?.value >= 300 && eval_after?.value <= 600){
+            if (eval_before?.value >= 800 && eval_after?.value >= 300 && eval_after?.value <= 600) {
                 accuracy = "mistake"
-            }
-            if (eval_before?.value >= 800 && eval_after?.value < eval_before?.value - 150 && eval_after?.value >= 600) {
+            } else if (eval_before?.value >= 800 && eval_after?.value < eval_before?.value - 150 && eval_after?.value >= 600) {
                 accuracy = "inaccuracy"
             }
-        } 
+        }
 
-        
-        if (eval_before?.type === "mate" && eval_after?.type === "mate"){
-            if (eval_before?.value > 0 && eval_after?.value < 0){
+        if (eval_before?.type === "mate" && eval_after?.type === "mate") {
+            const hadMate = moverIsWhite ? eval_before.value > 0 : eval_before.value < 0
+            const hasMate = moverIsWhite ? eval_after.value > 0 : eval_after.value < 0
+
+            if (hadMate && !hasMate) {
                 accuracy = "blunder"
+            } else if (!hadMate && hasMate) {
+                accuracy = "great"
             }
-            else if(eval_before?.value < 0 && eval_after?.value > 0){
-                accuracy = "blunder"
-            } 
         }   
 
 
