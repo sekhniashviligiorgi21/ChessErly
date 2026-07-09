@@ -4,7 +4,7 @@ let sf = null
 let sf11 = null
 let analysisId = 0
 let currentResolve = null
-let accuracyList = []
+
 
 export async function startEngine() {
     return new Promise((resolve) => {
@@ -206,12 +206,12 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null) {
 
     const [isBook, before] = await Promise.all([
         isBookMove(movesList, move),
-        analyzePosition(movesList, 10, null, true)
+        analyzePosition(movesList, 5, null, true)
     ])
 
     if (analysisId !== myId || !before) return null
 
-    const eval_before = accuracyList
+    const eval_before = before.evaluation
     const top_moves = before.topMoves || []
     const best11 = before.best11 ?? null       // SF11's best move from "before" position
     const best_move = top_moves[0]?.Move ?? ""
