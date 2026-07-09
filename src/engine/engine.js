@@ -1,114 +1,81 @@
 const LICHESS_TOKEN = import.meta.env.VITE_LICHESS_TOKEN
 
-// Configuration: Matches your Python pool setup
-const POOL_SIZE = 2 
-const enginePool = []
-const taskQueue = []
-let globalAnalysisId = 0
+let sf = null
+let sf11 = null
+let analysisId = 0
+let currentResolve = null
 
-/**
- * Initializes the pool of Stockfish worker pairs concurrently
- */
+
 export async function startEngine() {
-    const initializationPromises = []
+    return new Promise((resolve) => {
+        sf = new Worker('/stockfish/stockfish-17.1-lite-single.js')
+        sf11 = new Worker('/stockfish/stockfish.js')
 
-    for (let i = 0; i < POOL_SIZE; i++) {
-        const instance = {
-            id: i,
-            sf: new Worker('/stockfish/stockfish-17.1-lite-single.js'),
-            sf11: new Worker('/stockfish/stockfish.js'),
-            busy: false,
-            currentAnalysisId: 0
+        // Initialize SF18
+        const onMessage = (e) => {
+            const msg = e.data
+            if (msg === "uciok") {
+                sf.postMessage("setoption name MultiPV value 3")
+                sf.postMessage("isready")
+            }
+            if (msg === "readyok") {
+                sf.removeEventListener("message", onMessage)
+                resolve()
+            }
         }
-        enginePool.push(instance)
+        sf.addEventListener("message", onMessage)
+        sf.postMessage("uci")
 
-        const initInstance = new Promise((resolveInstance) => {
-            let sfReady = false
-            let sf11Ready = false
-
-            const checkReady = () => {
-                if (sfReady && sf11Ready) resolveInstance()
+        // Initialize SF11 (no MultiPV needed, just best move)
+        const onMessage11 = (e) => {
+            const msg = e.data
+            if (msg === "uciok") {
+                sf11.postMessage("isready")
             }
-
-            // Initialize Stockfish 18 Slot
-            const onMessage = (e) => {
-                const msg = e.data
-                if (msg === "uciok") {
-                    instance.sf.postMessage("setoption name MultiPV value 3")
-                    instance.sf.postMessage("isready")
-                }
-                if (msg === "readyok") {
-                    instance.sf.removeEventListener("message", onMessage)
-                    sfReady = true
-                    checkReady()
-                }
+            if (msg === "readyok") {
+                sf11.removeEventListener("message", onMessage11)
+                // SF11 ready, but we only resolve after SF18 is ready
             }
-            instance.sf.addEventListener("message", onMessage)
-            instance.sf.postMessage("uci")
+        }
+        sf11.addEventListener("message", onMessage11)
+        sf11.postMessage("uci")
+    })
+}
 
-            // Initialize Stockfish 11 Slot
-            const onMessage11 = (e) => {
-                const msg = e.data
-                if (msg === "uciok") {
-                    instance.sf11.postMessage("isready")
-                }
-                if (msg === "readyok") {
-                    instance.sf11.removeEventListener("message", onMessage11)
-                    sf11Ready = true
-                    checkReady()
-                }
-            }
-            instance.sf11.addEventListener("message", onMessage11)
-            instance.sf11.postMessage("uci")
-        })
+export function cancelAnalysis() {
+    analysisId++
 
-        initializationPromises.push(initInstance)
+    if (currentResolve) {
+        currentResolve(null)
+        currentResolve = null
     }
 
-    await Promise.all(initializationPromises)
-}
+    sf.onmessage = null
+    sf11.onmessage = null
 
-/**
- * Halts all current worker calculations and clears out the pending queue
- */
-export function cancelAnalysis() {
-    globalAnalysisId++
-    taskQueue.length = 0 // Clear pending tasks immediately
-
-    const stopPromises = enginePool.map((instance) => {
-        instance.sf.onmessage = null
-        instance.sf11.onmessage = null
-        instance.busy = false
-
-        return new Promise((resolve) => {
-            const absorber = (e) => {
-                if (typeof e.data === 'string' && e.data.startsWith('bestmove')) {
-                    instance.sf.removeEventListener('message', absorber)
-                    instance.sf11.removeEventListener('message', absorber)
-                    resolve()
-                }
-            }
-            instance.sf.addEventListener('message', absorber)
-            instance.sf.postMessage('stop')
-            instance.sf11.addEventListener('message', absorber)
-            instance.sf11.postMessage('stop')
-            
-            setTimeout(() => {
-                instance.sf.removeEventListener('message', absorber)
-                instance.sf11.removeEventListener('message', absorber)   
+    return new Promise((resolve) => {
+        const absorber = (e) => {
+            if (typeof e.data === 'string' && e.data.startsWith('bestmove')) {
+                sf.removeEventListener('message', absorber)
+                sf11.removeEventListener('message', absorber)
                 resolve()
-            }, 100)
-        })
+            }
+        }
+        sf.addEventListener('message', absorber)
+        sf.postMessage('stop')
+        sf11.addEventListener('message', absorber)
+        sf11.postMessage('stop')
+        setTimeout(() => {
+            sf.removeEventListener('message', absorber)
+            sf11.removeEventListener('message', absorber)   // was missing
+            resolve()
+        }, 100)
     })
-
-    return Promise.all(stopPromises)
 }
 
-/**
- * Handles communication with Lichess Opening Book API
- */
 async function isBookMove(movesList, move) {
     const bookList = movesList.join(",")
+
     const url = bookList 
         ? `https://explorer.lichess.ovh/masters?play=${bookList}`
         : `https://explorer.lichess.ovh/masters`
@@ -116,6 +83,7 @@ async function isBookMove(movesList, move) {
     try {
         const response = await fetch(url, {
             headers: {
+                // Lichess requires authentication to prevent API scraping
                 'Authorization': `Bearer ${LICHESS_TOKEN}`,
                 'Accept': 'application/json'
             }
@@ -130,18 +98,17 @@ async function isBookMove(movesList, move) {
     }
 }
 
-/**
- * Runs localized instance analysis for a specific position
- */
-function analyzePosition(instance, moves, depth, globalId, onUpdate = null, runsf11 = false) {
-    const localAnalysisId = ++instance.currentAnalysisId
+function analyzePosition(moves, depth, onUpdate = null, runsf11 = false) {
+    const myId = analysisId
 
     return new Promise((resolve) => {
+        currentResolve = resolve
         let topMoves = [], evaluation = null, best11 = null
         const isBlackToMove = moves.length % 2 === 1
 
-        instance.sf11.onmessage = (i) => {
-            if (globalAnalysisId !== globalId || instance.currentAnalysisId !== localAnalysisId) return
+    //stockfish 11 handler
+        sf11.onmessage = (i) => {
+            if (analysisId !== myId) return
             const msg11 = i.data
             if (msg11.startsWith('bestmove')) {
                 const m = msg11.match(/bestmove\s+(\S+)/)
@@ -149,8 +116,9 @@ function analyzePosition(instance, moves, depth, globalId, onUpdate = null, runs
             }
         }
 
-        instance.sf.onmessage = (e) => {
-            if (globalAnalysisId !== globalId || instance.currentAnalysisId !== localAnalysisId) return
+    //stockfish 18 handler    
+        sf.onmessage = (e) => {
+            if (analysisId !== myId) return
             const msg = e.data
 
             if (msg.includes("score") && msg.includes("pv")) {
@@ -167,6 +135,8 @@ function analyzePosition(instance, moves, depth, globalId, onUpdate = null, runs
                     : mate ? { type: "mate", value: parseInt(mate[1]) } : null
 
                 if (!score) return
+                // stockfish analyzies based on whose move it is
+                // this line makes it that analysis appears from white's perspective
                 if (isBlackToMove) score.value = -score.value
 
                 const info = {
@@ -190,24 +160,28 @@ function analyzePosition(instance, moves, depth, globalId, onUpdate = null, runs
             }
 
             if (msg.startsWith("bestmove")) {
-                instance.sf.onmessage = null
+                sf.onmessage = null
                 const finish = () => {
-                    instance.sf11.onmessage = null
+                    sf11.onmessage = null
+                    currentResolve = null
                     resolve({ evaluation, topMoves, best11 })
                 }
 
                 if (runsf11) {
-                    instance.sf11.postMessage('stop')
+                    sf11.postMessage('stop')
+                    // Wait for sf11's own bestmove before handing its onmessage
+                    // slot to the next analyzePosition call — otherwise a late
+                    // response can land in the wrong call and clobber best11.
                     const waitForSf11 = new Promise((res) => {
                         const onSf11Stop = (i) => {
                             if (typeof i.data === 'string' && i.data.startsWith('bestmove')) {
-                                instance.sf11.removeEventListener('message', onSf11Stop)
+                                sf11.removeEventListener('message', onSf11Stop)
                                 res()
                             }
                         }
-                        instance.sf11.addEventListener('message', onSf11Stop)
+                        sf11.addEventListener('message', onSf11Stop)
                         setTimeout(() => {
-                            instance.sf11.removeEventListener('message', onSf11Stop)
+                            sf11.removeEventListener('message', onSf11Stop)
                             res()
                         }, 100)
                     })
@@ -218,231 +192,180 @@ function analyzePosition(instance, moves, depth, globalId, onUpdate = null, runs
             }
         }
 
-        instance.sf.postMessage(moves.length > 0 ? `position startpos moves ${moves.join(" ")}` : "position startpos")
-        instance.sf.postMessage(`go depth ${depth}`)
+        sf.postMessage(moves.length > 0 ? `position startpos moves ${moves.join(" ")}` : "position startpos")
+        sf.postMessage(`go depth ${depth}`)
         if (runsf11) {
-            instance.sf11.postMessage(moves.length > 0 ? `position startpos moves ${moves.join(" ")}` : "position startpos")
-            instance.sf11.postMessage(`go depth 10`)
+            sf11.postMessage(moves.length > 0 ? `position startpos moves ${moves.join(" ")}` : "position startpos")
+            sf11.postMessage(`go depth 10`)
         }
     })
 }
 
-/**
- * Public facing execution function. Adds tasks to the execution queue.
- */
-export function getEvaluation(move, movesList, depth, onUpdate = null) {
-    const currentTaskId = globalAnalysisId
-    return new Promise((resolve, reject) => {
-        taskQueue.push({
-            move,
-            movesList,
-            depth,
-            onUpdate,
-            globalId: currentTaskId,
-            resolve,
-            reject
-        })
-        processQueue()
-    })
-}
+export async function getEvaluation(move, movesList, depth, onUpdate = null) {
+    const myId = analysisId
 
-/**
- * Queue Orchestrator: Finds an idle engine pair and assigns the task
- */
-async function processQueue() {
-    if (taskQueue.length === 0) return
+    const [isBook, before] = await Promise.all([
+        isBookMove(movesList, move),
+        analyzePosition(movesList, 10, null, true)
+    ])
 
-    // Find the first available instance that is not busy
-    const availableInstance = enginePool.find(instance => !instance.busy)
-    if (!availableInstance) return // All workers busy; wait for one to finish
+    if (analysisId !== myId || !before) return null
 
-    const task = taskQueue.shift()
-    
-    // Discard task if a cancellation occurred while it was sitting in queue
-    if (task.globalId !== globalAnalysisId) {
-        task.resolve(null)
-        processQueue()
-        return
-    }
+    const eval_before = before.evaluation
+    const top_moves = before.topMoves || []
+    const best11 = before.best11 ?? null       // SF11's best move from "before" position
+    const best_move = top_moves[0]?.Move ?? ""
+    const second_best_eval = top_moves.length >= 2
+        ? (top_moves[1]?.Centipawn ?? 0)
+        : (top_moves[0]?.Centipawn ?? 0)
 
-    availableInstance.busy = true
-    executeTask(availableInstance, task)
-}
 
-/**
- * Processes game evaluation logic using a checked-out engine instance
- */
-async function executeTask(instance, task) {
-    const { move, movesList, depth, onUpdate, globalId, resolve } = task
+    const afterMoves = move ? [...movesList, move] : movesList
+    const side_to_move = afterMoves.length % 2 === 1 ? "w" : "b"
 
-    try {
-        const [isBook, before] = await Promise.all([
-            isBookMove(movesList, move),
-            analyzePosition(instance, movesList, 10, globalId, null, true)
-        ])
+    function buildResult(eval_after, topMovesAfter, currentDepth) {
+        const best_line = topMovesAfter[0]?.line ?? []
+        const excellent_line = topMovesAfter[1]?.line ?? []
+        const third_line = topMovesAfter[2]?.line ?? []
+        let loss = 0, brilliant_loss = 0
 
-        if (globalAnalysisId !== globalId || !before) {
-            instance.busy = false
-            resolve(null)
-            processQueue()
-            return
-        }
-
-        const eval_before = before.evaluation
-        const top_moves = before.topMoves || []
-        const best11 = before.best11 ?? null       
-        const best_move = top_moves[0]?.Move ?? ""
-        const second_best_eval = top_moves.length >= 2
-            ? (top_moves[1]?.Centipawn ?? 0)
-            : (top_moves[0]?.Centipawn ?? 0)
-
-        const afterMoves = move ? [...movesList, move] : movesList
-        const side_to_move = afterMoves.length % 2 === 1 ? "w" : "b"
-
-        function buildResult(eval_after, topMovesAfter, currentDepth) {
-            const best_line = topMovesAfter[0]?.line ?? []
-            const excellent_line = topMovesAfter[1]?.line ?? []
-            const third_line = topMovesAfter[2]?.line ?? []
-            let loss = 0, brilliant_loss = 0
-
-            if (eval_before?.type === "cp" && eval_after?.type === "cp") {
-                if (side_to_move === "w") {
-                    loss = eval_before.value - eval_after.value
-                    brilliant_loss = eval_after.value - second_best_eval
-                } else {
-                    loss = eval_after.value - eval_before.value
-                    brilliant_loss = second_best_eval - eval_after.value
-                }
-                loss = Math.max(0, loss)
-            }
-
-            let accuracy = "none"
-            if (move) {
-                if (isBook) {
-                    accuracy = "book"
-                } else if (best_move === move && top_moves.length >= 2 && brilliant_loss > 150 && best11 !== null  && best11 !== best_move) {
-                    accuracy = "brilliant"
-                } else if (best_move === move && top_moves.length >= 2 && brilliant_loss > 150) {
-                    accuracy = "great"
-                } else if (best_move == move || loss < 15) {
-                    accuracy = "best"
-                } else if (loss < 40) {
-                    accuracy = "excellent"
-                } else if (loss < 80) {
-                    accuracy = "good"
-                } else if (loss < 150) {
-                    accuracy = "inaccuracy"
-                } else if (loss < 300) {
-                    accuracy = "mistake"
-                } else {
-                    accuracy = "blunder"
-                }
-            }
-
-            const moverIsWhite = side_to_move === "w"
-
-            if (eval_after?.type === "mate") {
-                const moverDeliversMate = moverIsWhite ? eval_after.value > 0 : eval_after.value < 0
-
-                if (moverDeliversMate) {
-                    if (best_move === move && top_moves.length >= 2 && top_moves[1]?.score?.type !== "mate") {
-                        accuracy = (best11 !== null && best11 !== best_move) ? "brilliant" : "great"
-                    }
-                } else if (eval_before?.type === "cp") {
-                    const alreadyLostBig = moverIsWhite ? eval_before.value <= -700 : eval_before.value >= 700
-                    const alreadyLostModerate = moverIsWhite ? eval_before.value <= -400 : eval_before.value >= 400
-
-                    if (alreadyLostBig) {
-                        accuracy = "inaccuracy"
-                    } else if (alreadyLostModerate) {
-                        accuracy = "mistake"
-                    } else {
-                        accuracy = "blunder"
-                    }
-                }
-            }
-
-            if (side_to_move === "b") {
-                if (eval_before?.type === "mate" && eval_after?.type === "cp") {
-                    if (eval_before.value < 0 && eval_after.value <= -700) {
-                        accuracy = "inaccuracy"
-                    } else if (eval_before.value < 0 && eval_after.value > -700 && eval_after.value <= -400) {
-                        accuracy = "mistake"
-                    } else {
-                        accuracy = "blunder"
-                    }
-                }
-                if (eval_before?.value <= -800 && eval_after?.value <= -300 && eval_after?.value >= -600) {
-                    accuracy = "mistake"
-                } else if (eval_before?.value <= -800 && eval_after?.value > eval_before?.value + 150 && eval_after?.value <= -600) {
-                    accuracy = "inaccuracy"
-                }
-            }
-
+        if (eval_before?.type === "cp" && eval_after?.type === "cp") {
             if (side_to_move === "w") {
-                if (eval_before?.type === "mate" && eval_after?.type === "cp") {
-                    if (eval_before.value > 0 && eval_after.value >= 700) {
-                        accuracy = "inaccuracy"
-                    } else if (eval_before.value > 0 && eval_after.value >= 400 && eval_after.value < 700) {
-                        accuracy = "mistake"
-                    } else {
-                        accuracy = "blunder"
-                    }
+                loss = eval_before.value - eval_after.value
+                brilliant_loss = eval_after.value - second_best_eval
+            } else {
+                loss = eval_after.value - eval_before.value
+                brilliant_loss = second_best_eval - eval_after.value
+            }
+            loss = Math.max(0, loss)
+        }
+
+        let accuracy = "none"
+        if (move) {
+            if (isBook) {
+                accuracy = "book"
+            } else if (best_move === move && top_moves.length >= 2 && brilliant_loss > 150 && best11 !== null  && best11 !== best_move) {
+                // SF18 agrees it's the best move, the 2nd option is >150cp worse,
+                // and SF11 (weaker engine) didn't find it — that's brilliant
+                accuracy = "brilliant"
+            } else if (best_move === move && top_moves.length >= 2 && brilliant_loss > 150) {
+                accuracy = "great"
+            } else if (best_move == move || loss < 15) {
+                accuracy = "best"
+            } else if (loss < 40) {
+                accuracy = "excellent"
+            } else if (loss < 80) {
+                accuracy = "good"
+            } else if (loss < 150) {
+                accuracy = "inaccuracy"
+            } else if (loss < 300) {
+                accuracy = "mistake"
+            } else {
+                accuracy = "blunder"
+            }
+        }
+
+
+        // handling accuracy in special occasions
+        // --- Special-case handling around forced mate ---
+        // eval_before/eval_after are always in White's perspective, so "good for the
+        // mover" depends on side_to_move — a raw magnitude check isn't enough on its own.
+        const moverIsWhite = side_to_move === "w"
+
+        if (eval_after?.type === "mate") {
+            const moverDeliversMate = moverIsWhite ? eval_after.value > 0 : eval_after.value < 0
+
+            if (moverDeliversMate) {
+                // Forcing mate is never worse than "best". If the 2nd-best line here
+                // doesn't also force mate, this move is uniquely decisive — treat it
+                // the same way a normal brilliant_loss spike would be treated.
+                if (best_move === move && top_moves.length >= 2 && top_moves[1]?.score?.type !== "mate") {
+                    accuracy = (best11 !== null && best11 !== best_move) ? "brilliant" : "great"
                 }
-                if (eval_before?.value >= 800 && eval_after?.value >= 300 && eval_after?.value <= 600) {
-                    accuracy = "mistake"
-                } else if (eval_before?.value >= 800 && eval_after?.value < eval_before?.value - 150 && eval_after?.value >= 600) {
+            } else if (eval_before?.type === "cp") {
+                // Mover blundered into getting mated. Only soften the label if they
+                // were already in a heavily lost position before this move.
+                const alreadyLostBig = moverIsWhite ? eval_before.value <= -700 : eval_before.value >= 700
+                const alreadyLostModerate = moverIsWhite ? eval_before.value <= -400 : eval_before.value >= 400
+
+                if (alreadyLostBig) {
                     accuracy = "inaccuracy"
-                }
-            }
-
-            if (eval_before?.type === "mate" && eval_after?.type === "mate") {
-                const hadMate = moverIsWhite ? eval_before.value > 0 : eval_before.value < 0
-                const hasMate = moverIsWhite ? eval_after.value > 0 : eval_after.value < 0
-
-                if (hadMate && !hasMate) {
+                } else if (alreadyLostModerate) {
+                    accuracy = "mistake"
+                } else {
                     accuracy = "blunder"
-                } else if (!hadMate && hasMate) {
-                    accuracy = "great"
                 }
-            }   
-
-            return {
-                depth: currentDepth,
-                move_played: move,
-                best_move,
-                eval: eval_after,
-                excellent_eval: topMovesAfter[1]?.Centipawn ?? null,
-                third_eval: topMovesAfter[2]?.Centipawn ?? null,
-                move_accuracy: accuracy,
-                best_line,
-                excellent_line,
-                third_line,
-                moves_list: afterMoves,
             }
         }
 
-        const afterFinal = await analyzePosition(
-            instance,
-            afterMoves,
-            depth,
-            globalId,
-            onUpdate ? (data) => onUpdate(buildResult(data.evaluation, data.topMoves, data.currentDepth)) : null
-        )
-
-        instance.busy = false
-
-        if (globalAnalysisId !== globalId || !afterFinal) {
-            resolve(null)
-        } else {
-            resolve(buildResult(afterFinal.evaluation, afterFinal.topMoves, depth))
+        if (side_to_move === "b") {
+            if (eval_before?.type === "mate" && eval_after?.type === "cp") {
+                if (eval_before.value < 0 && eval_after.value <= -700) {
+                    accuracy = "inaccuracy"
+                } else if (eval_before.value < 0 && eval_after.value > -700 && eval_after.value <= -400) {
+                    accuracy = "mistake"
+                } else {
+                    accuracy = "blunder"
+                }
+            }
+            if (eval_before?.value <= -800 && eval_after?.value <= -300 && eval_after?.value >= -600) {
+                accuracy = "mistake"
+            } else if (eval_before?.value <= -800 && eval_after?.value > eval_before?.value + 150 && eval_after?.value <= -600) {
+                accuracy = "inaccuracy"
+            }
         }
 
-    } catch (err) {
-        console.error("Task execution failed: ", err)
-        instance.busy = false
-        resolve(null)
-    } finally {
-        processQueue() // Pick up next element in line immediately
+        if (side_to_move === "w") {
+            if (eval_before?.type === "mate" && eval_after?.type === "cp") {
+                if (eval_before.value > 0 && eval_after.value >= 700) {
+                    accuracy = "inaccuracy"
+                } else if (eval_before.value > 0 && eval_after.value >= 400 && eval_after.value < 700) {
+                    accuracy = "mistake"
+                } else {
+                    accuracy = "blunder"
+                }
+            }
+            if (eval_before?.value >= 800 && eval_after?.value >= 300 && eval_after?.value <= 600) {
+                accuracy = "mistake"
+            } else if (eval_before?.value >= 800 && eval_after?.value < eval_before?.value - 150 && eval_after?.value >= 600) {
+                accuracy = "inaccuracy"
+            }
+        }
+
+        if (eval_before?.type === "mate" && eval_after?.type === "mate") {
+            const hadMate = moverIsWhite ? eval_before.value > 0 : eval_before.value < 0
+            const hasMate = moverIsWhite ? eval_after.value > 0 : eval_after.value < 0
+
+            if (hadMate && !hasMate) {
+                accuracy = "blunder"
+            } else if (!hadMate && hasMate) {
+                accuracy = "great"
+            }
+        }   
+
+
+
+        return {
+            depth: currentDepth,
+            move_played: move,
+            best_move,
+            eval: eval_after,
+            excellent_eval: topMovesAfter[1]?.Centipawn ?? null,
+            third_eval: topMovesAfter[2]?.Centipawn ?? null,
+            move_accuracy: accuracy,
+            best_line,
+            excellent_line,
+            third_line,
+            moves_list: afterMoves,
+        }
     }
+
+    const afterFinal = await analyzePosition(
+        afterMoves,
+        depth,
+        onUpdate ? (data) => onUpdate(buildResult(data.evaluation, data.topMoves, data.currentDepth)) : null
+    )
+    if (!afterFinal) return null
+
+    return buildResult(afterFinal.evaluation, afterFinal.topMoves, depth)
 }
