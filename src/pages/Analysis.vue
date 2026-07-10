@@ -773,6 +773,7 @@
       for (const uci of uciList) {
         const result = applyUciMove(uci)
         if (!result) break
+        boardAPI.value.setPosition(chess.fen())
         await getAccuracy()
         importProgress.value.current++
       }
