@@ -1,4 +1,103 @@
-// ... (startEngine, cancelAnalysis, and isBookMove remain unchanged)
+const LICHESS_TOKEN = import.meta.env.VITE_LICHESS_TOKEN
+
+let sf = null
+let sf11 = null
+let analysisId = 0
+let currentResolve = null
+
+
+export async function startEngine() {
+    return new Promise((resolve) => {
+        sf = new Worker('/stockfish/stockfish-17.1-lite-single.js')
+        sf11 = new Worker('/stockfish/stockfish.js')
+
+        // Initialize SF18
+        const onMessage = (e) => {
+            const msg = e.data
+            if (msg === "uciok") {
+                sf.postMessage("setoption name MultiPV value 3")
+                sf.postMessage("isready")
+            }
+            if (msg === "readyok") {
+                sf.removeEventListener("message", onMessage)
+                resolve()
+            }
+        }
+        sf.addEventListener("message", onMessage)
+        sf.postMessage("uci")
+
+        // Initialize SF11 (no MultiPV needed, just best move)
+        const onMessage11 = (e) => {
+            const msg = e.data
+            if (msg === "uciok") {
+                sf11.postMessage("isready")
+            }
+            if (msg === "readyok") {
+                sf11.removeEventListener("message", onMessage11)
+                // SF11 ready, but we only resolve after SF18 is ready
+            }
+        }
+        sf11.addEventListener("message", onMessage11)
+        sf11.postMessage("uci")
+    })
+}
+
+export function cancelAnalysis() {
+    analysisId++
+
+    if (currentResolve) {
+        currentResolve(null)
+        currentResolve = null
+    }
+
+    sf.onmessage = null
+    sf11.onmessage = null
+
+    return new Promise((resolve) => {
+        const absorber = (e) => {
+            if (typeof e.data === 'string' && e.data.startsWith('bestmove')) {
+                sf.removeEventListener('message', absorber)
+                sf11.removeEventListener('message', absorber)
+                resolve()
+            }
+        }
+        sf.addEventListener('message', absorber)
+        sf.postMessage('stop')
+        sf11.addEventListener('message', absorber)
+        sf11.postMessage('stop')
+        setTimeout(() => {
+            sf.removeEventListener('message', absorber)
+            sf11.removeEventListener('message', absorber)   // was missing
+            resolve()
+        }, 100)
+    })
+}
+
+async function isBookMove(movesList, move) {
+    const bookList = movesList.join(",")
+
+    const url = bookList 
+        ? `https://explorer.lichess.ovh/masters?play=${bookList}`
+        : `https://explorer.lichess.ovh/masters`
+
+    try {
+        const response = await fetch(url, {
+            headers: {
+                // Lichess requires authentication to prevent API scraping
+                'Authorization': `Bearer ${LICHESS_TOKEN}`,
+                'Accept': 'application/json'
+            }
+        })
+        if (!response.ok) return false
+        
+        const data = await response.json()
+        return data.moves ? data.moves.some(m => m.uci === move) : false
+    } catch (error) {
+        console.warn("Lichess book API fetch failed:", error)
+        return false
+    }
+}
+
 
 function analyzePosition(moves, depth, onUpdate = null, runsf11 = false) {
     const myId = analysisId
