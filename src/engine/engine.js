@@ -206,7 +206,7 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null) {
 
     const [isBook, before] = await Promise.all([
         isBookMove(movesList, move),
-        analyzePosition(movesList, 10, null, true)
+        analyzePosition(movesList, 5, null, true)
     ])
 
     if (analysisId !== myId || !before) return null
