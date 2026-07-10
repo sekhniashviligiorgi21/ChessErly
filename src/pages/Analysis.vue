@@ -769,22 +769,6 @@
   async function loadImportedGame(uciList) {
     isImporting.value = true
     importProgress.value = { current: 0, total: uciList.length }
-    try {
-      for (const uci of uciList) {
-        const result = applyUciMove(uci)
-        if (!result) break
-        await getAccuracy()
-        importProgress.value.current++
-      }
-      goToStart()
-    } finally {
-      isImporting.value = false
-    }
-  }
-
-  async function loadImportedGame(uciList) {
-    isImporting.value = true
-    importProgress.value = { current: 0, total: uciList.length }
     let priorAnalysis = null
     try {
       for (const uci of uciList) {
