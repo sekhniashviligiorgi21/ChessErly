@@ -229,7 +229,7 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null) {
     // where a big chunk of early moves are typically book moves.
     if (move && isBook) {
         const bookResult = {
-            depth: 5,
+            depth: 50,
             move_played: move,
             best_move,
             eval: eval_before,
