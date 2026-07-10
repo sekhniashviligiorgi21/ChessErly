@@ -512,9 +512,8 @@
       drawBestArrow()
       
       treeVersion.value++
-      return // Exit the function to prevent the engine from running
+      return // Exits the function to prevent the engine from running
     }
-    // -------------------
 
     isAnalyzing.value = true
     bestArrowSquares.value = null
@@ -732,7 +731,7 @@
       const currentTime = Date.now()
 
       if (event.repeat) return
-      if (isImporting.value) return // don't let the user jump around the tree while the engine is chewing through an imported game
+      if (isImporting.value) return // doesn't let the user jump around the tree while the engine is going through an imported game
 
       switch (event.key) {
           case 'ArrowLeft':
@@ -804,7 +803,6 @@
       for (const uci of uciList) {
         const result = applyUciMove(uci)
         if (!result) break
-        boardAPI.value.setPosition(chess.fen())
         await getAccuracy()
         importProgress.value.current++
       }
