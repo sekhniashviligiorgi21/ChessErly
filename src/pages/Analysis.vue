@@ -104,43 +104,28 @@
   const explorerError = ref("")
 
   async function importLichessExplorer(){
-  explorerLoading.value = true
-  explorerError.value = ""
+    explorerLoading.value = true
+    explorerError.value = ""
 
-  const uciList = movesListUCI.value
-  if (uciList.length > 40) {
-    explorerLoading.value = false
-    return
-  }
+    const uciList = movesListUCI.value
+    if (uciList.length > 40) {
+      explorerLoading.value = false
+      return
+    }
 
-  const bookList = uciList.join(",")
-  const url = bookList
-      ? `https://explorer.lichess.ovh/masters?play=${bookList}`
-      : `https://explorer.lichess.ovh/masters`
+    const bookList = uciList.join(",")
+    const url = bookList
+        ? `https://explorer.lichess.ovh/masters?play=${bookList}`
+        : `https://explorer.lichess.ovh/masters`
 
-  const maxAttempts = 3
-  const backoffMs = [300, 900]
+    const backoffMs = [300, 900]
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+
     try {
-        const response = await fetch(url, {
-          headers: {
-            'Authorization': `Bearer ${LICHESS_TOKEN}`,
-            'Accept': 'application/json'
-          }
-        })
-
-        // Transient/outage statuses: retry before giving up
-        if (response.status === 429 || response.status === 401 || response.status >= 500) {
-          if (attempt < maxAttempts - 1) {
-            await new Promise(r => setTimeout(r, backoffMs[attempt]))
-            continue
-          }
-          explorerError.value = "Explorer temporarily unavailable — try again shortly"
-          explorerStats.value = null
-          explorerMoves.value = []
-          explorerLoading.value = false
-          return
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${LICHESS_TOKEN}`,
+          'Accept': 'application/json'
         }
 
         // Genuinely no data for this position (e.g. very obscure line in masters DB)
