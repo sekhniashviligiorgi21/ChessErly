@@ -1,5 +1,5 @@
 <script setup>
-  import { ref, shallowRef, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+  import { shallowRef, ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
   import { Chess } from 'chess.js'
   import { TheChessboard } from 'vue3-chessboard'
   import 'vue3-chessboard/style.css'
@@ -38,7 +38,7 @@
   // State
   const route = useRoute()
   const router = useRouter()
-  const isSettingsOpen = ref(false)
+  const isSettingsOpen = shallowRef(false)
   const isFlipped = computed(() => (rotate.value / 180) % 2 === 1)
 
   const chess = new Chess()
@@ -56,52 +56,52 @@
     return stored >= 10 && stored <= 30 ? stored : 10
   }
 
-  const moveData = shallowRef(null)
-  const boardAPI = shallowRef(null)
-  const isAnalyzing = ref(false)
-  const isImporting = ref(false)
-  const importProgress = ref({ current: 0, total: 0 })
+  const moveData = shallowshallowRef(null)
+  const boardAPI = shallowshallowRef(null)
+  const isAnalyzing = shallowRef(false)
+  const isImporting = shallowRef(false)
+  const importProgress = shallowRef({ current: 0, total: 0 })
   let importCancelled = false
-  const currentDepth = ref(10)
-  const targetDepth = ref(loadStoredDepth())
-  const height = ref(47.75)
-  const cp = ref(0)
-  const rotate = ref(0)
-  const isAccuracy = ref("")
-  const color = ref("")
-  const sanLine = ref([])
-  const bestMoveSan = ref('')
-  const excellentSanLine = ref([])
-  const treeVersion = ref(0)
-  const movesListUCI = ref([])
-  const lastMoveSquare = ref(null)
-  const lastMoveAccuracy = ref(null)
-  const boardRef = ref(null)
-  const movesListRef = ref(null)
-  const thirdSanLine = ref([])
-  const soundOn = ref(true)
-  const showBestArrow = ref(true)
-  const bestArrowSquares = ref(null) 
-  const toastMessage = ref('')
-  const activeTab = ref('moves')
-  const explorerTitle = ref(null)
-  const contextMenu = ref({ visible: false, x: 0, y: 0, nodeId: null })
+  const currentDepth = shallowRef(10)
+  const targetDepth = shallowRef(loadStoredDepth())
+  const height = shallowRef(47.75)
+  const cp = shallowRef(0)
+  const rotate = shallowRef(0)
+  const isAccuracy = shallowRef("")
+  const color = shallowRef("")
+  const sanLine = shallowRef([])
+  const bestMoveSan = shallowRef('')
+  const excellentSanLine = shallowRef([])
+  const treeVersion = shallowRef(0)
+  const movesListUCI = shallowRef([])
+  const lastMoveSquare = shallowRef(null)
+  const lastMoveAccuracy = shallowRef(null)
+  const boardshallowRef = shallowRef(null)
+  const movesListshallowRef = shallowRef(null)
+  const thirdSanLine = shallowRef([])
+  const soundOn = shallowRef(true)
+  const showBestArrow = shallowRef(true)
+  const bestArrowSquares = shallowRef(null) 
+  const toastMessage = shallowRef('')
+  const activeTab = shallowRef('moves')
+  const explorerTitle = shallowRef(null)
+  const contextMenu = shallowRef({ visible: false, x: 0, y: 0, nodeId: null })
 
   // Imported player info (passed via router query from Review.vue)
-  const whiteName = ref('White')
-  const blackName = ref('Black')
-  const whiteRating = ref(null)
-  const blackRating = ref(null)
-  const hasPlayerInfo = ref(false)
+  const whiteName = shallowRef('White')
+  const blackName = shallowRef('Black')
+  const whiteRating = shallowRef(null)
+  const blackRating = shallowRef(null)
+  const hasPlayerInfo = shallowRef(false)
 
   // lichess opening explorer (masters database)
   const LICHESS_TOKEN = import.meta.env.VITE_LICHESS_TOKEN
-  const opening = ref("")
-  const openingEco = ref("")
-  const explorerStats = ref(null)     // aggregate totals for current position: { white, draws, black, total }
-  const explorerMoves = ref([])       // per-move breakdown: [{ san, uci, total, white, draws, black }]
-  const explorerLoading = ref(false)
-  const explorerError = ref("")
+  const opening = shallowRef("")
+  const openingEco = shallowRef("")
+  const explorerStats = shallowRef(null)     // aggregate totals for current position: { white, draws, black, total }
+  const explorerMoves = shallowRef([])       // per-move breakdown: [{ san, uci, total, white, draws, black }]
+  const explorerLoading = shallowRef(false)
+  const explorerError = shallowRef("")
 
   async function importLichessExplorer(){
     explorerLoading.value = true
@@ -240,7 +240,7 @@
   let nodeIdCounter = 1
 
   const nodeMap = { 0: moveTree }
-  const currentNode = shallowRef(moveTree)
+  const currentNode = shallowshallowRef(moveTree)
 
   const renderedMoves = computed(() => {
     treeVersion.value
@@ -305,10 +305,10 @@
     return rows
   })
 
-  const activeColor = ref('#5e3c20')
-  const passiveColor = ref('#8d5b33')
-  const movesTitle = ref(null)
-  const reportTitle = ref(null)
+  const activeColor = shallowRef('#5e3c20')
+  const passiveColor = shallowRef('#8d5b33')
+  const movesTitle = shallowRef(null)
+  const reportTitle = shallowRef(null)
 
   function changeActiveToMoves(){
     activeTab.value = 'moves'
@@ -947,7 +947,7 @@
 
   // Cancels an in-progress import/review: stops the engine, halts the
   // move-by-move loop in loadImportedGame, resets the board back to a clean
-  // slate, and strips the imported game out of the URL so a refresh or
+  // slate, and strips the imported game out of the URL so a shallowRefresh or
   // back-nav doesn't reload it.
   async function cancelImport() {
     importCancelled = true
@@ -1042,7 +1042,7 @@
           <div class="loading-progress-fill" :style="{ width: importProgressPercent + '%' }"></div>
         </div>
         <div class="loading-tips">
-          <p class="loading-tip">Review stuck? A quick page refresh usually fixes it.</p>
+          <p class="loading-tip">Review stuck? A quick page shallowRefresh usually fixes it.</p>
           <p class="loading-tip">Feels slow? Try lowering the engine depth in Settings.</p>
         </div>
         <button class="cancel-import-btn" @click="cancelImport">Cancel review</button>
@@ -1053,7 +1053,7 @@
   <div class="grid-layout">
     <Title class="title-slot"/>
     <div class="board-area">
-      <div class="board-wrapper" ref="boardRef">
+      <div class="board-wrapper" shallowRef="boardshallowRef">
         <div class="player-bar" v-if="hasPlayerInfo">
           <span class="player-color-dot" :class="topPlayer.side"></span>
           <span class="player-name">{{ topPlayer.name }}</span>
@@ -1155,13 +1155,13 @@
         
         <!-- UPDATED TABS SECTION -->
         <div class="movesButtons">
-          <button class="movehistory" @click="changeActiveToMoves()" ref="movesTitle">Moves</button>
-          <button class="movehistory" @click="changeActiveToReport()" ref="reportTitle">Report</button>
-          <button class="movehistory" @click="changeActiveToExplorer()" ref="explorerTitle">Explorer</button>
+          <button class="movehistory" @click="changeActiveToMoves()" shallowRef="movesTitle">Moves</button>
+          <button class="movehistory" @click="changeActiveToReport()" shallowRef="reportTitle">Report</button>
+          <button class="movehistory" @click="changeActiveToExplorer()" shallowRef="explorerTitle">Explorer</button>
         </div>
         
         <!-- MOVES TAB -->
-        <div class="moveslist" v-if="activeTab === 'moves'" ref="movesListRef">
+        <div class="moveslist" v-if="activeTab === 'moves'" shallowRef="movesListshallowRef">
           <template v-for="row in renderedMoves" :key="row.key">
             <div class="move-row" :class="{ variant: row.depth > 0 }" :style="{ '--indent': `${row.depth * 1.05}rem` }">
               <div
