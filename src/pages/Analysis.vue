@@ -36,7 +36,7 @@
   })
 
   // State
-  const LICHESS_TOKEN = import.meta.env.VITE_LICHESS_TOKEN
+  const LICHESS_TOKEN = import.meta.env.VITE_LICHESS_TOKEN2
   const route = useRoute()
   const router = useRouter()
   const isSettingsOpen = ref(false)
