@@ -17,6 +17,7 @@
     window.addEventListener('click', closeContextMenu)
     window.addEventListener('scroll', closeContextMenu, true)
     reportTitle.value.style.backgroundColor = passiveColor.value
+    explorerTitle.value.style.backgroundColor = passiveColor.value
     await startEngine();
     engineReady = true
     if (!route.query.moves){
@@ -35,6 +36,7 @@
   })
 
   // State
+  const LICHESS_TOKEN = import.meta.env.VITE_LICHESS_TOKEN
   const route = useRoute()
   const router = useRouter()
   const isSettingsOpen = ref(false)
@@ -46,7 +48,7 @@
   const bestChess = new Chess()
   const thirdChess = new Chess()
 
-  // Persist the user's chosen engine depth across route/component remounts
+  // Persists the user's chosen engine depth across route/component remounts
   // (Analysis.vue gets recreated whenever the router query changes, e.g. when
   // importing a game from Review.vue, which used to reset this back to 10)
   const DEPTH_STORAGE_KEY = 'chesslab_targetDepth'
@@ -82,7 +84,8 @@
   const showBestArrow = ref(true)
   const bestArrowSquares = ref(null) 
   const toastMessage = ref('')
-  const displayMoves = ref(true)
+  const activeTab = ref('moves')
+  const explorerTitle = ref(null)
   const contextMenu = ref({ visible: false, x: 0, y: 0, nodeId: null })
 
   // Imported player info (passed via router query from Review.vue)
@@ -91,6 +94,95 @@
   const whiteRating = ref(null)
   const blackRating = ref(null)
   const hasPlayerInfo = ref(false)
+
+  // lichess opening explorer (masters database)
+  const opening = ref("")
+  const openingEco = ref("")
+  const explorerStats = ref(null)     // aggregate totals for current position: { white, draws, black, total }
+  const explorerMoves = ref([])       // per-move breakdown: [{ san, uci, total, white, draws, black }]
+  const explorerLoading = ref(false)
+  const explorerError = ref("")
+
+  async function importLichessExplorer(){
+    explorerLoading.value = true
+    explorerError.value = ""
+
+    const uciList = movesListUCI.value
+    if (uciList.length > 40) {
+      explorerLoading.value = false
+      return
+    }
+
+    const bookList = uciList.join(",")
+    const url = bookList
+        ? `https://explorer.lichess.ovh/masters?play=${bookList}`
+        : `https://explorer.lichess.ovh/masters`
+
+    try {
+        const response = await fetch(url, { headers: { 'Accept': 'application/json' } })
+        if (!response.ok) {
+            explorerError.value = "Explorer unavailable"
+            explorerStats.value = null
+            explorerMoves.value = []
+            return
+        }
+
+        const data = await response.json()
+
+        if (data.opening) {
+            opening.value = data.opening.name
+            openingEco.value = data.opening.eco
+        } else {
+            opening.value = uciList.length === 0 ? "Starting position" : "Out of book"
+            openingEco.value = ""
+        }
+
+        const total = (data.white ?? 0) + (data.draws ?? 0) + (data.black ?? 0)
+        explorerStats.value = total > 0 ? {
+            white: Math.round((data.white / total) * 100),
+            draws: Math.round((data.draws / total) * 100),
+            black: Math.round((data.black / total) * 100),
+            total
+        } : null
+
+        // Per-move breakdown, sorted by popularity (most-played first)
+        explorerMoves.value = (data.moves ?? [])
+          .map(m => {
+            const moveTotal = (m.white ?? 0) + (m.draws ?? 0) + (m.black ?? 0)
+            return {
+              san: m.san,
+              uci: m.uci,
+              total: moveTotal,
+              percent: total > 0 ? Math.round((moveTotal / total) * 100) : 0,
+              white: moveTotal > 0 ? Math.round((m.white / moveTotal) * 100) : 0,
+              draws: moveTotal > 0 ? Math.round((m.draws / moveTotal) * 100) : 0,
+              black: moveTotal > 0 ? Math.round((m.black / moveTotal) * 100) : 0,
+            }
+          })
+          .sort((a, b) => b.total - a.total)
+
+        explorerError.value = ""
+
+    } catch (error) {
+        console.warn("Explorer fetch failed:", error)
+        explorerError.value = "No connection to explorer"
+        explorerStats.value = null
+        explorerMoves.value = []
+    } finally {
+        explorerLoading.value = false
+    }
+  }
+
+  // Clicking a row in the explorer plays that move on the board
+  function playExplorerMove(uci) {
+    const result = applyUciMove(uci)
+    if (!result) return
+    soundForLastMove(result)
+    boardAPI.value.setPosition(chess.fen())
+    treeVersion.value++
+    getAccuracy()
+  }
+
 
   if (route.query.white || route.query.black) {
     hasPlayerInfo.value = true
@@ -205,23 +297,24 @@
   const reportTitle = ref(null)
 
   function changeActiveToMoves(){
-    if (movesTitle.value){
-      movesTitle.value.style.backgroundColor = activeColor.value
-    }
-
-    if (reportTitle.value){
-     reportTitle.value.style.backgroundColor = passiveColor.value
-    }
+    activeTab.value = 'moves'
+    if (movesTitle.value) movesTitle.value.style.backgroundColor = activeColor.value
+    if (reportTitle.value) reportTitle.value.style.backgroundColor = passiveColor.value
+    if (explorerTitle.value) explorerTitle.value.style.backgroundColor = passiveColor.value
   }
 
   function changeActiveToReport(){
-    if (reportTitle.value){
-      reportTitle.value.style.backgroundColor = activeColor.value
-    }
+    activeTab.value = 'report'
+    if (reportTitle.value) reportTitle.value.style.backgroundColor = activeColor.value
+    if (movesTitle.value) movesTitle.value.style.backgroundColor = passiveColor.value
+    if (explorerTitle.value) explorerTitle.value.style.backgroundColor = passiveColor.value
+  }
 
-    if (movesTitle.value){
-      movesTitle.value.style.backgroundColor = passiveColor.value
-    }
+  function changeActiveToExplorer(){
+    activeTab.value = 'explorer'
+    if (explorerTitle.value) explorerTitle.value.style.backgroundColor = activeColor.value
+    if (movesTitle.value) movesTitle.value.style.backgroundColor = passiveColor.value
+    if (reportTitle.value) reportTitle.value.style.backgroundColor = passiveColor.value
   }
 
   function deleteMove(nodeId) {
@@ -344,6 +437,21 @@
   watch(showBestArrow, (val) => {
     if (!val && boardAPI.value) boardAPI.value.hideMoves()
     else drawBestArrow()
+  })
+
+  // Automatically fetches explorer data when the current node (position) changes
+  watch(currentNode, () => {
+    // Only fetches if the explorer tab is active to save API requests
+    if (activeTab.value === 'explorer') {
+      importLichessExplorer()
+    }
+  }, { immediate: true })
+
+  // Triggers it immediately when the user switches to the explorer tab
+  watch(activeTab, (newTab) => {
+    if (newTab === 'explorer') {
+      importLichessExplorer()
+    }
   })
 
   function showToast(message) {
@@ -490,7 +598,7 @@
   }
 
   async function getAccuracy() {
-    await cancelAnalysis() // Stop any running analysis first
+    await cancelAnalysis() // Stops any running analysis first
     
     // --- CACHE CHECK ---
     const cached = currentNode.value.analysisData
@@ -1030,11 +1138,16 @@
         </div>
       </div>
       <div class="moves">
+        
+        <!-- UPDATED TABS SECTION -->
         <div class="movesButtons">
-          <button class="movehistory" @click="displayMoves=true; changeActiveToMoves()" ref="movesTitle">Moves</button>
-          <button class="movehistory" @click="displayMoves=false; changeActiveToReport()" ref="reportTitle">Report</button>
+          <button class="movehistory" @click="changeActiveToMoves()" ref="movesTitle">Moves</button>
+          <button class="movehistory" @click="changeActiveToReport()" ref="reportTitle">Report</button>
+          <button class="movehistory" @click="changeActiveToExplorer()" ref="explorerTitle">Explorer</button>
         </div>
-        <div class="moveslist" v-if="displayMoves" ref="movesListRef">
+        
+        <!-- MOVES TAB -->
+        <div class="moveslist" v-if="activeTab === 'moves'" ref="movesListRef">
           <template v-for="row in renderedMoves" :key="row.key">
             <div class="move-row" :class="{ variant: row.depth > 0 }" :style="{ '--indent': `${row.depth * 1.05}rem` }">
               <div
@@ -1057,53 +1170,113 @@
             </div>
           </template>
         </div>
-      <div class="report" v-else-if="!displayMoves">
-        <div class="report-columns">
-          <div class="report-col">
-            <div class="report-side-header">
-              <span class="side-swatch white-swatch"></span>
-              <span>White</span>
-            </div>
-            <div class="accuracy-score" v-if="gameReportStats.white.accuracy !== null">
-              {{ gameReportStats.white.accuracy.toFixed(1) }}<span class="accuracy-percent">%</span>
-            </div>
-            <div class="accuracy-score empty" v-else>—</div>
 
-            <div
-              v-for="key in classificationOrder"
-              :key="'w-' + key"
-              class="report-row"
-              :class="{ dim: gameReportStats.white.counts[key] === 0 }"
-            >
-              <img :src="accuracySymbol(key)" class="report-row-icon" />
-              <span class="report-row-label" :style="{ color: classificationMeta[key].color }">{{ classificationMeta[key].label }}</span>
-              <span class="report-row-count">{{ gameReportStats.white.counts[key] }}</span>
-            </div>
-          </div>
+        <!-- REPORT TAB -->
+        <div class="report" v-else-if="activeTab === 'report'">
+          <div class="report-columns">
+            <div class="report-col">
+              <div class="report-side-header">
+                <span class="side-swatch white-swatch"></span>
+                <span>White</span>
+              </div>
+              <div class="accuracy-score" v-if="gameReportStats.white.accuracy !== null">
+                {{ gameReportStats.white.accuracy.toFixed(1) }}<span class="accuracy-percent">%</span>
+              </div>
+              <div class="accuracy-score empty" v-else>—</div>
 
-          <div class="report-col">
-            <div class="report-side-header">
-              <span class="side-swatch black-swatch"></span>
-              <span>Black</span>
+              <div
+                v-for="key in classificationOrder"
+                :key="'w-' + key"
+                class="report-row"
+                :class="{ dim: gameReportStats.white.counts[key] === 0 }"
+              >
+                <img :src="accuracySymbol(key)" class="report-row-icon" />
+                <span class="report-row-label" :style="{ color: classificationMeta[key].color }">{{ classificationMeta[key].label }}</span>
+                <span class="report-row-count">{{ gameReportStats.white.counts[key] }}</span>
+              </div>
             </div>
-            <div class="accuracy-score" v-if="gameReportStats.black.accuracy !== null">
-              {{ gameReportStats.black.accuracy.toFixed(1) }}<span class="accuracy-percent">%</span>
-            </div>
-            <div class="accuracy-score empty" v-else>—</div>
 
-            <div
-              v-for="key in classificationOrder"
-              :key="'b-' + key"
-              class="report-row"
-              :class="{ dim: gameReportStats.black.counts[key] === 0 }"
-            >
-              <img :src="accuracySymbol(key)" class="report-row-icon" />
-              <span class="report-row-label" :style="{ color: classificationMeta[key].color }">{{ classificationMeta[key].label }}</span>
-              <span class="report-row-count">{{ gameReportStats.black.counts[key] }}</span>
+            <div class="report-col">
+              <div class="report-side-header">
+                <span class="side-swatch black-swatch"></span>
+                <span>Black</span>
+              </div>
+              <div class="accuracy-score" v-if="gameReportStats.black.accuracy !== null">
+                {{ gameReportStats.black.accuracy.toFixed(1) }}<span class="accuracy-percent">%</span>
+              </div>
+              <div class="accuracy-score empty" v-else>—</div>
+
+              <div
+                v-for="key in classificationOrder"
+                :key="'b-' + key"
+                class="report-row"
+                :class="{ dim: gameReportStats.black.counts[key] === 0 }"
+              >
+                <img :src="accuracySymbol(key)" class="report-row-icon" />
+                <span class="report-row-label" :style="{ color: classificationMeta[key].color }">{{ classificationMeta[key].label }}</span>
+                <span class="report-row-count">{{ gameReportStats.black.counts[key] }}</span>
+              </div>
             </div>
           </div>
         </div>
+
+       <!-- EXPLORER TAB -->
+      <div class="explorer" v-else-if="activeTab === 'explorer'">
+        <div v-if="explorerLoading" class="explorer-status">Loading…</div>
+        <div v-else-if="explorerError" class="explorer-status error">{{ explorerError }}</div>
+        <template v-else>
+          <div class="explorer-header">
+            <span class="explorer-eco" v-if="openingEco">{{ openingEco }}</span>
+            <span class="explorer-name">{{ opening }}</span>
+          </div>
+
+          <div class="explorer-table" v-if="explorerMoves.length">
+            <div class="explorer-row explorer-row-head">
+              <span class="col-move">Move</span>
+              <span class="col-games">Games</span>
+              <span class="col-split">White / Draw / Black</span>
+            </div>
+
+            <div
+              v-for="m in explorerMoves"
+              :key="m.uci"
+              class="explorer-row"
+              @click="playExplorerMove(m.uci)"
+            >
+              <span class="col-move">{{ prettyMove(m.san) }}</span>
+              <span class="col-games">
+                <span class="games-percent">{{ m.percent }}%</span>
+                <span class="games-count">{{ m.total.toLocaleString() }}</span>
+              </span>
+              <span class="col-split">
+                <div class="split-bar">
+                  <div class="split-white" :style="{ width: m.white + '%' }" :title="`White ${m.white}%`"></div>
+                  <div class="split-draw" :style="{ width: m.draws + '%' }" :title="`Draws ${m.draws}%`"></div>
+                  <div class="split-black" :style="{ width: m.black + '%' }" :title="`Black ${m.black}%`"></div>
+                </div>
+              </span>
+            </div>
+
+            <div class="explorer-row explorer-row-total" v-if="explorerStats">
+              <span class="col-move">Σ</span>
+              <span class="col-games">
+                <span class="games-percent">100%</span>
+                <span class="games-count">{{ explorerStats.total.toLocaleString() }}</span>
+              </span>
+              <span class="col-split">
+                <div class="split-bar">
+                  <div class="split-white" :style="{ width: explorerStats.white + '%' }" :title="`White ${explorerStats.white}%`"></div>
+                  <div class="split-draw" :style="{ width: explorerStats.draws + '%' }" :title="`Draws ${explorerStats.draws}%`"></div>
+                  <div class="split-black" :style="{ width: explorerStats.black + '%' }" :title="`Black ${explorerStats.black}%`"></div>
+                </div>
+              </span>
+            </div>
+          </div>
+
+          <div class="explorer-status" v-else>No games found for this position</div>
+        </template>
       </div>
+
       </div>
     </div>
   </div>
@@ -1962,4 +2135,170 @@
     text-align: center;
     flex-shrink: 0;
   }
+
+  /* --- Tab buttons: fix overflow --- */
+.movesButtons {
+  display: flex;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0 0.5rem;
+}
+
+.movehistory {
+  font-family: serif;
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: center;
+  color: #f5f5dc;
+  font-weight: 700;
+  text-transform: uppercase;
+  margin: 12px 0;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+  letter-spacing: 1px;
+  padding: 0.5rem 0.4rem;
+  border-radius: 5px;
+  background-color: #5e3c20;
+  border: none;
+  font-size: clamp(0.7rem, 2vw, 0.95rem);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+/* --- Explorer tab --- */
+  .explorer {
+    padding: 0.6rem 0.8rem 1rem;
+    box-sizing: border-box;
+  }
+
+  .explorer-status {
+    text-align: center;
+    color: rgba(245, 245, 220, 0.7);
+    font-family: 'Inter', sans-serif;
+    font-size: 0.9rem;
+    padding: 2rem 1rem;
+  }
+
+  .explorer-status.error { color: #ffb0a8; }
+
+  .explorer-header {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.4rem 0.5rem 0.8rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    margin-bottom: 0.6rem;
+  }
+
+  .explorer-eco {
+    font-family: "JetBrains Mono", monospace;
+    font-weight: 700;
+    font-size: 0.85rem;
+    color: #9fd8ff;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 6px;
+    padding: 0.1rem 0.4rem;
+    flex-shrink: 0;
+  }
+
+  .explorer-name {
+    font-family: serif;
+    font-weight: 700;
+    color: #f5f5dc;
+    font-size: clamp(0.95rem, 2.2vw, 1.15rem);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .explorer-table {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .explorer-row {
+    display: grid;
+    grid-template-columns: 3rem 4.2rem 1fr;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.45rem 0.5rem;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.12);
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+
+  .explorer-row:not(.explorer-row-head):not(.explorer-row-total):hover {
+    background: rgba(103, 122, 228, 0.18);
+  }
+
+  .explorer-row-head {
+    background: transparent;
+    cursor: default;
+    color: rgba(245, 245, 220, 0.55);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    font-weight: 700;
+    padding-bottom: 0.2rem;
+  }
+
+  .explorer-row-total {
+    cursor: default;
+    background: rgba(0, 0, 0, 0.22);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    margin-top: 0.2rem;
+    font-weight: 700;
+  }
+
+  .col-move {
+    font-weight: 700;
+    color: #f4f0e3;
+    font-size: 0.9rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .col-games {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.15;
+  }
+
+  .games-percent {
+    font-family: "JetBrains Mono", monospace;
+    font-weight: 700;
+    font-size: 0.85rem;
+    color: #f4f0e3;
+  }
+
+  .games-count {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.68rem;
+    color: rgba(245, 245, 220, 0.55);
+  }
+
+  .col-split { min-width: 0; }
+
+  .split-bar {
+    display: flex;
+    width: 100%;
+    height: 1.3rem;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+  }
+
+  .split-white, .split-draw, .split-black {
+    height: 100%;
+    transition: width 0.3s ease;
+  }
+
+  .split-white { background: #e8e4d8; }
+  .split-draw  { background: #8a8a86; }
+  .split-black { background: #2b2b2b; }
 </style>

@@ -224,7 +224,7 @@
 	    flex: 1 1 auto;
 	    min-width: 6rem;
 	  }
-	  /* Optional: Adjust tooltip position for smaller mobile layouts so they don't clip */
+    
 	  .tooltip-btn::after {
 		bottom: 125%;
 	  }
