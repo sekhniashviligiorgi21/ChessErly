@@ -16,8 +16,6 @@
     window.addEventListener('keydown', handleKeyDown)
     window.addEventListener('click', closeContextMenu)
     window.addEventListener('scroll', closeContextMenu, true)
-    reportTitle.value.style.backgroundColor = passiveColor.value
-    explorerTitle.value.style.backgroundColor = passiveColor.value
     await startEngine();
     engineReady = true
     if (!route.query.moves){
@@ -48,8 +46,6 @@
   const thirdChess = new Chess()
 
   // Persists the user's chosen engine depth across route/component remounts
-  // (Analysis.vue gets recreated whenever the router query changes, e.g. when
-  // importing a game from Review.vue, which used to reset this back to 10)
   const DEPTH_STORAGE_KEY = 'chesslab_targetDepth'
   function loadStoredDepth() {
     const stored = Number(localStorage.getItem(DEPTH_STORAGE_KEY))
@@ -76,18 +72,24 @@
   const movesListUCI = shallowRef([])
   const lastMoveSquare = shallowRef(null)
   const lastMoveAccuracy = shallowRef(null)
-  const boardshallowRef = shallowRef(null)
-  const movesListshallowRef = shallowRef(null)
+  
+  // Corrected Template Refs
+  const boardRef = ref(null)
+  const movesListRef = ref(null)
+  
   const thirdSanLine = shallowRef([])
   const soundOn = shallowRef(true)
   const showBestArrow = shallowRef(true)
   const bestArrowSquares = shallowRef(null) 
   const toastMessage = shallowRef('')
   const activeTab = shallowRef('moves')
-  const explorerTitle = shallowRef(null)
   const contextMenu = shallowRef({ visible: false, x: 0, y: 0, nodeId: null })
 
-  // Imported player info (passed via router query from Review.vue)
+  // Colors for Tab Navigation
+  const activeColor = shallowRef('#5e3c20')
+  const passiveColor = shallowRef('#8d5b33')
+
+  // Imported player info
   const whiteName = shallowRef('White')
   const blackName = shallowRef('Black')
   const whiteRating = shallowRef(null)
@@ -98,12 +100,12 @@
   const LICHESS_TOKEN = import.meta.env.VITE_LICHESS_TOKEN
   const opening = shallowRef("")
   const openingEco = shallowRef("")
-  const explorerStats = shallowRef(null)     // aggregate totals for current position: { white, draws, black, total }
-  const explorerMoves = shallowRef([])       // per-move breakdown: [{ san, uci, total, white, draws, black }]
+  const explorerStats = shallowRef(null)     
+  const explorerMoves = shallowRef([])       
   const explorerLoading = shallowRef(false)
   const explorerError = shallowRef("")
 
-  async function importLichessExplorer(){
+  async function importLichessExplorer()){
     explorerLoading.value = true
     explorerError.value = ""
 
@@ -187,7 +189,6 @@
     }
   }
 
-  // Clicking a row in the explorer plays that move on the board
   function playExplorerMove(uci) {
     const result = applyUciMove(uci)
     if (!result) return
@@ -196,7 +197,6 @@
     treeVersion.value++
     getAccuracy()
   }
-
 
   if (route.query.white || route.query.black) {
     hasPlayerInfo.value = true
@@ -218,7 +218,6 @@
       : { name: whiteName.value, rating: whiteRating.value, side: 'white' }
   ))
 
-
   let longPressTimer = null
   let longPressTriggered = false
   let toastTimeout = null
@@ -232,13 +231,12 @@
     uci: null,
     fen: chess.fen(),
     accuracy: null,
-    analysisData: null, // New cache property
+    analysisData: null, 
     parent: null,
     children: []
   }
 
   let nodeIdCounter = 1
-
   const nodeMap = { 0: moveTree }
   const currentNode = shallowRef(moveTree)
 
@@ -305,41 +303,19 @@
     return rows
   })
 
-  const activeColor = shallowRef('#5e3c20')
-  const passiveColor = shallowRef('#8d5b33')
-  const movesTitle = shallowRef(null)
-  const reportTitle = shallowRef(null)
-
-  function changeActiveToMoves(){
-    activeTab.value = 'moves'
-    if (movesTitle.value) movesTitle.value.style.backgroundColor = activeColor.value
-    if (reportTitle.value) reportTitle.value.style.backgroundColor = passiveColor.value
-    if (explorerTitle.value) explorerTitle.value.style.backgroundColor = passiveColor.value
-  }
-
-  function changeActiveToReport(){
-    activeTab.value = 'report'
-    if (reportTitle.value) reportTitle.value.style.backgroundColor = activeColor.value
-    if (movesTitle.value) movesTitle.value.style.backgroundColor = passiveColor.value
-    if (explorerTitle.value) explorerTitle.value.style.backgroundColor = passiveColor.value
-  }
-
-  function changeActiveToExplorer(){
-    activeTab.value = 'explorer'
-    if (explorerTitle.value) explorerTitle.value.style.backgroundColor = activeColor.value
-    if (movesTitle.value) movesTitle.value.style.backgroundColor = passiveColor.value
-    if (reportTitle.value) reportTitle.value.style.backgroundColor = passiveColor.value
-  }
+  // Cleaned up Tab updates (manual DOM code removed)
+  function changeActiveToMoves(){ activeTab.value = 'moves' }
+  function changeActiveToReport(){ activeTab.value = 'report' }
+  function changeActiveToExplorer(){ activeTab.value = 'explorer' }
 
   function deleteMove(nodeId) {
     const node = nodeMap[nodeId]
-    if (!node || node.parent === null) return // can't delete the root
+    if (!node || node.parent === null) return 
 
     const parent = node.parent
     const idx = parent.children.indexOf(node)
     if (idx !== -1) parent.children.splice(idx, 1)
 
-    // collect this node + all its descendants so we can purge them from nodeMap
     function collectIds(n, ids) {
       ids.push(n.id)
       for (const child of n.children) collectIds(child, ids)
@@ -351,7 +327,6 @@
     for (const id of idsToRemove) delete nodeMap[id]
 
     if (currentWasRemoved) {
-      // board was sitting somewhere inside the deleted line — snap back to the parent
       jumpToNode(parent.id)
     } else {
       treeVersion.value++
@@ -369,20 +344,13 @@
     }
   }
 
-  function closeContextMenu() {
-    contextMenu.value.visible = false
-  }
-
-  function openContextMenu(event, nodeId) {
-    showContextMenu(event.clientX, event.clientY, nodeId)
-  }
-
+  function closeContextMenu() { contextMenu.value.visible = false }
+  function openContextMenu(event, nodeId) { showContextMenu(event.clientX, event.clientY, nodeId) }
   function handleDeleteFromMenu() {
     if (contextMenu.value.nodeId !== null) deleteMove(contextMenu.value.nodeId)
     closeContextMenu()
   }
 
-  // Long-press for mobile
   function handleTouchStart(event, nodeId) {
     longPressTriggered = false
     longPressTimer = setTimeout(() => {
@@ -393,10 +361,9 @@
     }, 500)
   }
 
-  function cancelLongPress() {
-    clearTimeout(longPressTimer)
-  }
+   Kakao
 
+  function cancelLongPress() { clearTimeout(longPressTimer) }
   function handleCellClick(nodeId) {
     if (longPressTriggered) {
       longPressTriggered = false
@@ -405,7 +372,6 @@
     jumpToNode(nodeId)
   }
 
-  // Audio Context management safely wrapped inside an explicit check
   function ensureAudioCtx() {
     if (!audioCtx) {
       const Ctx = window.AudioContext || window.webkitAudioContext
@@ -447,21 +413,17 @@
     else playSound('move')
   }
 
-  // Watchers to trigger drawing immediately if toggled from modal
   watch(showBestArrow, (val) => {
     if (!val && boardAPI.value) boardAPI.value.hideMoves()
     else drawBestArrow()
   })
 
-  // Automatically fetches explorer data when the current node (position) changes
   watch(currentNode, () => {
-    // Only fetches if the explorer tab is active to save API requests
     if (activeTab.value === 'explorer') {
       importLichessExplorer()
     }
   }, { immediate: true })
 
-  // Triggers it immediately when the user switches to the explorer tab
   watch(activeTab, (newTab) => {
     if (newTab === 'explorer') {
       importLichessExplorer()
@@ -486,7 +448,6 @@
   function copyPGN() { copyToClipboard(chess.pgn() || '(no moves yet)', 'PGN') }
   function copyFEN() { copyToClipboard(chess.fen(), 'FEN') }
 
-  // Arrow Drawing Logic
   function drawBestArrow() {
     if (!showBestArrow.value || !boardAPI.value || !bestArrowSquares.value) return
     const { from, to } = bestArrowSquares.value
@@ -500,8 +461,6 @@
     boardReady = true
     await tryLoadImportedGame()
   }
-
-  
 
   async function handleBothMoves(move) {
     const uci = move.promotion ? `${move.from}${move.to}${move.promotion}` : `${move.from}${move.to}`
@@ -612,12 +571,10 @@
   }
 
   async function getAccuracy() {
-    await cancelAnalysis() // Stops any running analysis first
+    await cancelAnalysis() 
     
-    // --- CACHE CHECK ---
     const cached = currentNode.value.analysisData
     if (cached && cached.depth >= targetDepth.value) {
-      // Restore from cache if the stored depth is sufficient
       moveData.value = cached
       lastMoveSquare.value = movesListUCI.value.at(-1)?.slice(2, 4) ?? null
       lastMoveAccuracy.value = cached.move_accuracy
@@ -626,7 +583,6 @@
       isAnalyzing.value = false
       if (showBestArrow.value && boardAPI.value) boardAPI.value.hideMoves()
       
-      // Trigger UI updates
       if (typeof evalSize === "function") evalSize()
       if (typeof moveDescription === "function") moveDescription()
       if (typeof sanBest === "function") sanBest()
@@ -636,7 +592,7 @@
       drawBestArrow()
       
       treeVersion.value++
-      return // Exits the function to prevent the engine from running
+      return 
     }
 
     isAnalyzing.value = true
@@ -653,7 +609,7 @@
         lastMoveAccuracy.value = result.move_accuracy
         
         currentNode.value.accuracy = result.move_accuracy
-        currentNode.value.analysisData = result // <-- SAVE TO CACHE
+        currentNode.value.analysisData = result 
         
         currentDepth.value = result.depth
         isAnalyzing.value = false
@@ -692,7 +648,6 @@
           return
       }
       cp.value = Math.max(-800, Math.min(800, evalValue))
-      // Scales exactly from 0% (full white) to 100% (full black)
       height.value = 50 - (cp.value / 800) * 50
   }
 
@@ -800,16 +755,11 @@
 
   function squareStyle(square) {
     if (!square) return {}
-
     const file = square.charCodeAt(0) - 97
     const rank = parseInt(square[1]) - 1
     const isFlipped = (rotate.value / 180) % 2 === 1
-
     const col = isFlipped ? 7 - file : file
     const row = isFlipped ? rank : 7 - rank
-
-    // Each square is exactly 12.5% of the board's width/height.
-    // (col + 1) aligns to the right edge of the square; row aligns to the top edge.
     return {
         position: 'absolute',
         left: `${(col + 1) * 12.5}%`,
@@ -855,7 +805,7 @@
       const currentTime = Date.now()
 
       if (event.repeat) return
-      if (isImporting.value) return // doesn't let the user jump around the tree while the engine is going through an imported game
+      if (isImporting.value) return 
 
       switch (event.key) {
           case 'ArrowLeft':
@@ -919,7 +869,6 @@
       getAccuracy()
   }
 
-  // Game report logic
   async function loadImportedGame(uciList) {
     isImporting.value = true
     importCancelled = false
@@ -945,10 +894,6 @@
     }
   }
 
-  // Cancels an in-progress import/review: stops the engine, halts the
-  // move-by-move loop in loadImportedGame, resets the board back to a clean
-  // slate, and strips the imported game out of the URL so a shallowRefresh or
-  // back-nav doesn't reload it.
   async function cancelImport() {
     importCancelled = true
     await cancelAnalysis()
@@ -979,7 +924,6 @@
 
   const gameReportStats = computed(() => {
     treeVersion.value
-
     function emptyCounts() {
       return classificationOrder.reduce((acc, key) => ({ ...acc, [key]: 0 }), {})
     }
@@ -992,13 +936,11 @@
 
     while (current) {
       const side = ply % 2 === 1 ? white : black
-
       if (current.accuracy && side.counts.hasOwnProperty(current.accuracy)) {
         side.counts[current.accuracy]++
         side.weightedSum += accuracyWeights[current.accuracy] ?? 0
         side.moveCount++
       }
-
       current = current.children[0] ?? null
       ply++
     }
@@ -1015,11 +957,9 @@
     if (!importProgress.value.total) return 0
     return Math.round((importProgress.value.current / importProgress.value.total) * 100)
   })
-
 </script>
 
 <template>
-  <!-- Main Settings Integration -->
   <SettingsPanel 
     v-model:isOpen="isSettingsOpen"
     v-model:targetDepth="targetDepth"
@@ -1042,7 +982,7 @@
           <div class="loading-progress-fill" :style="{ width: importProgressPercent + '%' }"></div>
         </div>
         <div class="loading-tips">
-          <p class="loading-tip">Review stuck? A quick page shallowRefresh usually fixes it.</p>
+          <p class="loading-tip">Review stuck? A quick page refresh usually fixes it.</p>
           <p class="loading-tip">Feels slow? Try lowering the engine depth in Settings.</p>
         </div>
         <button class="cancel-import-btn" @click="cancelImport">Cancel review</button>
@@ -1053,7 +993,8 @@
   <div class="grid-layout">
     <Title class="title-slot"/>
     <div class="board-area">
-      <div class="board-wrapper" shallowRef="boardshallowRef">
+      <!-- Fixed Template Ref Configuration -->
+      <div class="board-wrapper" ref="boardRef">
         <div class="player-bar" v-if="hasPlayerInfo">
           <span class="player-color-dot" :class="topPlayer.side"></span>
           <span class="player-name">{{ topPlayer.name }}</span>
@@ -1062,7 +1003,6 @@
         
         <div class="board-row">
           <div class="board-col">
-            <!-- Added specific class to handle overflow bounds -->
             <TheChessboard 
               class="game-board"
               @move="handleBothMoves" 
@@ -1153,15 +1093,27 @@
       </div>
       <div class="moves">
         
-        <!-- UPDATED TABS SECTION -->
+        <!-- Updated to Tab Bindings Declaratively using :style logic -->
         <div class="movesButtons">
-          <button class="movehistory" @click="changeActiveToMoves()" shallowRef="movesTitle">Moves</button>
-          <button class="movehistory" @click="changeActiveToReport()" shallowRef="reportTitle">Report</button>
-          <button class="movehistory" @click="changeActiveToExplorer()" shallowRef="explorerTitle">Explorer</button>
+          <button 
+            class="movehistory" 
+            :style="{ backgroundColor: activeTab === 'moves' ? activeColor : passiveColor }"
+            @click="changeActiveToMoves()"
+          >Moves</button>
+          <button 
+            class="movehistory" 
+            :style="{ backgroundColor: activeTab === 'report' ? activeColor : passiveColor }"
+            @click="changeActiveToReport()"
+          >Report</button>
+          <button 
+            class="movehistory" 
+            :style="{ backgroundColor: activeTab === 'explorer' ? activeColor : passiveColor }"
+            @click="changeActiveToExplorer()"
+          >Explorer</button>
         </div>
         
         <!-- MOVES TAB -->
-        <div class="moveslist" v-if="activeTab === 'moves'" shallowRef="movesListshallowRef">
+        <div class="moveslist" v-if="activeTab === 'moves'" ref="movesListRef">
           <template v-for="row in renderedMoves" :key="row.key">
             <div class="move-row" :class="{ variant: row.depth > 0 }" :style="{ '--indent': `${row.depth * 1.05}rem` }">
               <div
@@ -1311,7 +1263,6 @@
   <Transition name="toast-fade">
     <div v-if="toastMessage" class="toast">{{ toastMessage }}</div>
   </Transition>
-</template>
 
 <style scoped>
   @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Inter:wght@400;500;600;700&display=swap');
