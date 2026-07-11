@@ -47,9 +47,6 @@
   const bestChess = new Chess()
   const thirdChess = new Chess()
 
-  // Persists the user's chosen engine depth across route/component remounts
-  // (Analysis.vue gets recreated whenever the router query changes, e.g. when
-  // importing a game from Review.vue, which used to reset this back to 10)
   const DEPTH_STORAGE_KEY = 'chesslab_targetDepth'
   function loadStoredDepth() {
     const stored = Number(localStorage.getItem(DEPTH_STORAGE_KEY))
@@ -87,21 +84,20 @@
   const explorerTitle = ref(null)
   const contextMenu = ref({ visible: false, x: 0, y: 0, nodeId: null })
 
-  // Imported player info (passed via router query from Review.vue)
+  // Imported player info
   const whiteName = ref('White')
   const blackName = ref('Black')
   const whiteRating = ref(null)
   const blackRating = ref(null)
   const hasPlayerInfo = ref(false)
 
-  // lichess opening explorer (masters database)
+  // Lichess opening explorer
   const LICHESS_TOKEN = import.meta.env.VITE_LICHESS_TOKEN
   const opening = ref("")
   const openingEco = ref("")
   
-  // CONVERTED TO shallowRef: Avoid deep recursive proxying of statistics & tables
-  const explorerStats = shallowRef(null)     // aggregate totals for current position: { white, draws, black, total }
-  const explorerMoves = shallowRef([])       // per-move breakdown: [{ san, uci, total, white, draws, black }]
+  const explorerStats = shallowRef(null)     
+  const explorerMoves = shallowRef([])       
   
   const explorerLoading = ref(false)
   const explorerError = ref("")
@@ -190,16 +186,14 @@
     }
   }
 
-  // Clicking a row in the explorer plays that move on the board
+  // OPTIMIZED: Uses structural gating to prevent layout-bashing re-renders
   function playExplorerMove(uci) {
     const result = applyUciMove(uci)
     if (!result) return
     soundForLastMove(result)
     boardAPI.value.setPosition(chess.fen())
-    treeVersion.value++
     getAccuracy()
   }
-
 
   if (route.query.white || route.query.black) {
     hasPlayerInfo.value = true
@@ -221,7 +215,6 @@
       : { name: whiteName.value, rating: whiteRating.value, side: 'white' }
   ))
 
-
   let longPressTimer = null
   let longPressTriggered = false
   let toastTimeout = null
@@ -235,13 +228,12 @@
     uci: null,
     fen: chess.fen(),
     accuracy: null,
-    analysisData: null, // New cache property
+    analysisData: null, 
     parent: null,
     children: []
   }
 
   let nodeIdCounter = 1
-
   const nodeMap = { 0: moveTree }
   const currentNode = shallowRef(moveTree)
 
@@ -334,15 +326,15 @@
     if (reportTitle.value) reportTitle.value.style.backgroundColor = passiveColor.value
   }
 
+  // OPTIMIZED: Clear visual footprint dependencies perfectly on deletion
   function deleteMove(nodeId) {
     const node = nodeMap[nodeId]
-    if (!node || node.parent === null) return // can't delete the root
+    if (!node || node.parent === null) return 
 
     const parent = node.parent
     const idx = parent.children.indexOf(node)
     if (idx !== -1) parent.children.splice(idx, 1)
 
-    // collect this node + all its descendants so we can purge them from nodeMap
     function collectIds(n, ids) {
       ids.push(n.id)
       for (const child of n.children) collectIds(child, ids)
@@ -353,11 +345,10 @@
 
     for (const id of idsToRemove) delete nodeMap[id]
 
+    treeVersion.value++
+
     if (currentWasRemoved) {
-      // board was sitting somewhere inside the deleted line — snap back to the parent
       jumpToNode(parent.id)
-    } else {
-      treeVersion.value++
     }
   }
 
@@ -385,7 +376,6 @@
     closeContextMenu()
   }
 
-  // Long-press for mobile
   function handleTouchStart(event, nodeId) {
     longPressTriggered = false
     longPressTimer = setTimeout(() => {
@@ -408,7 +398,6 @@
     jumpToNode(nodeId)
   }
 
-  // Audio Context management safely wrapped inside an explicit check
   function ensureAudioCtx() {
     if (!audioCtx) {
       const Ctx = window.AudioContext || window.webkitAudioContext
@@ -450,21 +439,17 @@
     else playSound('move')
   }
 
-  // Watchers to trigger drawing immediately if toggled from modal
   watch(showBestArrow, (val) => {
     if (!val && boardAPI.value) boardAPI.value.hideMoves()
     else drawBestArrow()
   })
 
-  // Automatically fetches explorer data when the current node (position) changes
   watch(currentNode, () => {
-    // Only fetches if the explorer tab is active to save API requests
     if (activeTab.value === 'explorer') {
       importLichessExplorer()
     }
   }, { immediate: true })
 
-  // Triggers it immediately when the user switches to the explorer tab
   watch(activeTab, (newTab) => {
     if (newTab === 'explorer') {
       importLichessExplorer()
@@ -489,7 +474,6 @@
   function copyPGN() { copyToClipboard(chess.pgn() || '(no moves yet)', 'PGN') }
   function copyFEN() { copyToClipboard(chess.fen(), 'FEN') }
 
-  // Arrow Drawing Logic
   function drawBestArrow() {
     if (!showBestArrow.value || !boardAPI.value || !bestArrowSquares.value) return
     const { from, to } = bestArrowSquares.value
@@ -504,8 +488,7 @@
     await tryLoadImportedGame()
   }
 
-  
-
+  // OPTIMIZED: Decouples existing variation trees from causing forced layout thrashing
   async function handleBothMoves(move) {
     const uci = move.promotion ? `${move.from}${move.to}${move.promotion}` : `${move.from}${move.to}`
     const sanMove = chess.move({ from: move.from, to: move.to, promotion: move.promotion ?? undefined })
@@ -522,18 +505,19 @@
       currentNode.value = existing
     } else {
       const newNode = {
-      id: nodeIdCounter++, san: sanMove.san, uci, fen: chess.fen(), accuracy: null, analysisData: null, parent: currentNode.value, children: []
-  }
+        id: nodeIdCounter++, san: sanMove.san, uci, fen: chess.fen(), accuracy: null, analysisData: null, parent: currentNode.value, children: []
+      }
       nodeMap[newNode.id] = newNode
       currentNode.value.children.push(newNode)
       currentNode.value = newNode
+      treeVersion.value++
     }
 
     movesListUCI.value.push(uci)
-    treeVersion.value++
     await getAccuracy()
   }
 
+  // OPTIMIZED: Pure navigation updates currentNode smoothly without dumping tree caches
   function undoMove() {
     lastMoveSquare.value = null
     lastMoveAccuracy.value = null
@@ -542,9 +526,9 @@
     currentNode.value = currentNode.value.parent
     movesListUCI.value.pop()
     boardAPI.value.setPosition(chess.fen())
-    treeVersion.value++
   }
 
+  // OPTIMIZED: Standard forward navigation leaves layout caches unthrashed
   function redoMove() {
     lastMoveSquare.value = null
     lastMoveAccuracy.value = null
@@ -555,12 +539,12 @@
     movesListUCI.value.push(nextNode.uci)
     currentNode.value = nextNode
     boardAPI.value.setPosition(nextNode.fen)
-    treeVersion.value++
   }
 
   function undoAccuracy() { undoMove(); getAccuracy(); }
   function redoAccuracy() { redoMove(); getAccuracy(); }
 
+  // OPTIMIZED: Node jumping highlights components natively via currentNode binding
   function jumpToNode(nodeId) {
     const node = nodeMap[nodeId]
     if (!node || node === currentNode.value) return
@@ -581,7 +565,6 @@
     moveData.value = null
     isAccuracy.value = ""
     color.value = ""
-    treeVersion.value++
     getAccuracy()
   }
 
@@ -614,13 +597,12 @@
     moveData.value = null
   }
 
+  // OPTIMIZED: Cache hits stay fast, layout operations are entirely gated away during import loops
   async function getAccuracy() {
-    await cancelAnalysis() // Stops any running analysis first
+    await cancelAnalysis() 
     
-    // --- CACHE CHECK ---
     const cached = currentNode.value.analysisData
     if (cached && cached.depth >= targetDepth.value) {
-      // Restore from cache if the stored depth is sufficient
       moveData.value = cached
       lastMoveSquare.value = movesListUCI.value.at(-1)?.slice(2, 4) ?? null
       lastMoveAccuracy.value = cached.move_accuracy
@@ -629,7 +611,6 @@
       isAnalyzing.value = false
       if (showBestArrow.value && boardAPI.value) boardAPI.value.hideMoves()
       
-      // Trigger UI updates
       if (typeof evalSize === "function") evalSize()
       if (typeof moveDescription === "function") moveDescription()
       if (typeof sanBest === "function") sanBest()
@@ -638,8 +619,7 @@
       if (typeof uciLine === "function") uciLine()
       drawBestArrow()
       
-      treeVersion.value++
-      return // Exits the function to prevent the engine from running
+      return 
     }
 
     isAnalyzing.value = true
@@ -656,7 +636,7 @@
         lastMoveAccuracy.value = result.move_accuracy
         
         currentNode.value.accuracy = result.move_accuracy
-        currentNode.value.analysisData = result // <-- SAVE TO CACHE
+        currentNode.value.analysisData = result 
         
         currentDepth.value = result.depth
         isAnalyzing.value = false
@@ -669,7 +649,9 @@
         if (typeof uciLine === "function") uciLine()
         drawBestArrow()
         
-        treeVersion.value++
+        if (!isImporting.value) {
+          treeVersion.value++
+        }
       }
     )
   }
@@ -695,7 +677,6 @@
           return
       }
       cp.value = Math.max(-800, Math.min(800, evalValue))
-      // Scales exactly from 0% (full white) to 100% (full black)
       height.value = 50 - (cp.value / 800) * 50
   }
 
@@ -811,8 +792,6 @@
     const col = isFlipped ? 7 - file : file
     const row = isFlipped ? rank : 7 - rank
 
-    // Each square is exactly 12.5% of the board's width/height.
-    // (col + 1) aligns to the right edge of the square; row aligns to the top edge.
     return {
         position: 'absolute',
         left: `${(col + 1) * 12.5}%`,
@@ -858,7 +837,7 @@
       const currentTime = Date.now()
 
       if (event.repeat) return
-      if (isImporting.value) return // doesn't let the user jump around the tree while the engine is going through an imported game
+      if (isImporting.value) return 
 
       switch (event.key) {
           case 'ArrowLeft':
@@ -882,6 +861,7 @@
       }
   }
 
+  // OPTIMIZED: Gated structure avoids compiling layout configurations mid-stream
   function applyUciMove(uci) {
       const from = uci.slice(0, 2)
       const to = uci.slice(2, 4)
@@ -900,10 +880,14 @@
           nodeMap[newNode.id] = newNode
           currentNode.value.children.push(newNode)
           currentNode.value = newNode
+          
+          if (!isImporting.value) {
+            treeVersion.value++
+          }
         }
 
         movesListUCI.value.push(uci)
-          return sanMove
+        return sanMove
   }
 
   function playLineMoves(uciList, count) {
@@ -922,7 +906,7 @@
       getAccuracy()
   }
 
-  // Game report logic
+  // OPTIMIZED: Compiles and batch updates exactly ONE visual tree structure cycle at the loop finish
   async function loadImportedGame(uciList) {
     isImporting.value = true
     importCancelled = false
@@ -935,7 +919,10 @@
         await getAccuracy()
         importProgress.value.current++
       }
-      if (!importCancelled) goToStart()
+      if (!importCancelled) {
+        goToStart()
+        treeVersion.value++
+      }
     } finally {
       isImporting.value = false
     }
@@ -948,10 +935,6 @@
     }
   }
 
-  // Cancels an in-progress import/review: stops the engine, halts the
-  // move-by-move loop in loadImportedGame, resets the board back to a clean
-  // slate, and strips the imported game out of the URL so a refresh or
-  // back-nav doesn't reload it.
   async function cancelImport() {
     importCancelled = true
     await cancelAnalysis()
@@ -980,7 +963,6 @@
     excellent: 90, good: 80, inaccuracy: 20, mistake: 10, blunder: 0
   }
 
-  // CONVERTED TO shallowRef: Complex report metrics that iterate linearly over the ply history
   const gameReportStats = computed(() => {
     treeVersion.value
 
@@ -1019,7 +1001,6 @@
     if (!importProgress.value.total) return 0
     return Math.round((importProgress.value.current / importProgress.value.total) * 100)
   })
-
 </script>
 
 <template>
