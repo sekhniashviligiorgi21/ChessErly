@@ -104,27 +104,57 @@
   const explorerError = ref("")
 
   async function importLichessExplorer(){
-    explorerLoading.value = true
-    explorerError.value = ""
+  explorerLoading.value = true
+  explorerError.value = ""
 
-    const uciList = movesListUCI.value
-    if (uciList.length > 40) {
-      explorerLoading.value = false
-      return
-    }
+  const uciList = movesListUCI.value
+  if (uciList.length > 40) {
+    explorerLoading.value = false
+    return
+  }
 
-    const bookList = uciList.join(",")
-    const url = bookList
-        ? `https://explorer.lichess.ovh/masters?play=${bookList}`
-        : `https://explorer.lichess.ovh/masters`
+  const bookList = uciList.join(",")
+  const url = bookList
+      ? `https://explorer.lichess.ovh/masters?play=${bookList}`
+      : `https://explorer.lichess.ovh/masters`
 
+  const maxAttempts = 3
+  const backoffMs = [300, 900]
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
         const response = await fetch(url, { headers: { 'Accept': 'application/json' } })
+
+        // Transient/outage statuses: retry before giving up
+        if (response.status === 429 || response.status === 401 || response.status >= 500) {
+          if (attempt < maxAttempts - 1) {
+            await new Promise(r => setTimeout(r, backoffMs[attempt]))
+            continue
+          }
+          explorerError.value = "Explorer temporarily unavailable — try again shortly"
+          explorerStats.value = null
+          explorerMoves.value = []
+          explorerLoading.value = false
+          return
+        }
+
+        // Genuinely no data for this position (e.g. very obscure line in masters DB)
+        if (response.status === 204) {
+          opening.value = "No master games at this position"
+          openingEco.value = ""
+          explorerStats.value = null
+          explorerMoves.value = []
+          explorerError.value = ""
+          explorerLoading.value = false
+          return
+        }
+
         if (!response.ok) {
-            explorerError.value = "Explorer unavailable"
-            explorerStats.value = null
-            explorerMoves.value = []
-            return
+          explorerError.value = `Explorer error (${response.status})`
+          explorerStats.value = null
+          explorerMoves.value = []
+          explorerLoading.value = false
+          return
         }
 
         const data = await response.json()
@@ -145,7 +175,6 @@
             total
         } : null
 
-        // Per-move breakdown, sorted by popularity (most-played first)
         explorerMoves.value = (data.moves ?? [])
           .map(m => {
             const moveTotal = (m.white ?? 0) + (m.draws ?? 0) + (m.black ?? 0)
@@ -162,16 +191,23 @@
           .sort((a, b) => b.total - a.total)
 
         explorerError.value = ""
+        explorerLoading.value = false
+        return
 
     } catch (error) {
+        if (attempt < maxAttempts - 1) {
+          await new Promise(r => setTimeout(r, backoffMs[attempt]))
+          continue
+        }
         console.warn("Explorer fetch failed:", error)
         explorerError.value = "No connection to explorer"
         explorerStats.value = null
         explorerMoves.value = []
-    } finally {
-        explorerLoading.value = false
     }
   }
+
+  explorerLoading.value = false
+}
 
   // Clicking a row in the explorer plays that move on the board
   function playExplorerMove(uci) {
