@@ -36,7 +36,6 @@
   })
 
   // State
-  const LICHESS_TOKEN = import.meta.env.VITE_LICHESS_TOKEN2
   const route = useRoute()
   const router = useRouter()
   const isSettingsOpen = ref(false)
@@ -96,6 +95,7 @@
   const hasPlayerInfo = ref(false)
 
   // lichess opening explorer (masters database)
+  const LICHESS_TOKEN = import.meta.env.VITE_LICHESS_TOKEN2
   const opening = ref("")
   const openingEco = ref("")
   const explorerStats = ref(null)     // aggregate totals for current position: { white, draws, black, total }
@@ -123,7 +123,12 @@
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-        const response = await fetch(url, { headers: { 'Accept': 'application/json' } })
+        const response = await fetch(url, {
+          headers: {
+            'Authorization': `Bearer ${LICHESS_TOKEN}`,
+            'Accept': 'application/json'
+          }
+        })
 
         // Transient/outage statuses: retry before giving up
         if (response.status === 429 || response.status === 401 || response.status >= 500) {
