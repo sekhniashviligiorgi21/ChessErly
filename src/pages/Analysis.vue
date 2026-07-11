@@ -95,7 +95,7 @@
   const hasPlayerInfo = ref(false)
 
   // lichess opening explorer (masters database)
-  const LICHESS_TOKEN = import.meta.env.VITE_LICHESS_TOKEN2
+  const LICHESS_TOKEN = import.meta.env.VITE_LICHESS_TOKEN
   const opening = ref("")
   const openingEco = ref("")
   const explorerStats = ref(null)     // aggregate totals for current position: { white, draws, black, total }
