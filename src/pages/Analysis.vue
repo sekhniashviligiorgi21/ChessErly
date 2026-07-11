@@ -118,86 +118,74 @@
         ? `https://explorer.lichess.ovh/masters?play=${bookList}`
         : `https://explorer.lichess.ovh/masters`
 
-    const backoffMs = [300, 900]
-
-
     try {
       const response = await fetch(url, {
         headers: {
           'Authorization': `Bearer ${LICHESS_TOKEN}`,
           'Accept': 'application/json'
         }
+      })
 
-        // Genuinely no data for this position (e.g. very obscure line in masters DB)
-        if (response.status === 204) {
-          opening.value = "No master games at this position"
-          openingEco.value = ""
-          explorerStats.value = null
-          explorerMoves.value = []
-          explorerError.value = ""
-          explorerLoading.value = false
-          return
-        }
-
-        if (!response.ok) {
-          explorerError.value = `Explorer error (${response.status})`
-          explorerStats.value = null
-          explorerMoves.value = []
-          explorerLoading.value = false
-          return
-        }
-
-        const data = await response.json()
-
-        if (data.opening) {
-            opening.value = data.opening.name
-            openingEco.value = data.opening.eco
-        } else {
-            opening.value = uciList.length === 0 ? "Starting position" : "Out of book"
-            openingEco.value = ""
-        }
-
-        const total = (data.white ?? 0) + (data.draws ?? 0) + (data.black ?? 0)
-        explorerStats.value = total > 0 ? {
-            white: Math.round((data.white / total) * 100),
-            draws: Math.round((data.draws / total) * 100),
-            black: Math.round((data.black / total) * 100),
-            total
-        } : null
-
-        explorerMoves.value = (data.moves ?? [])
-          .map(m => {
-            const moveTotal = (m.white ?? 0) + (m.draws ?? 0) + (m.black ?? 0)
-            return {
-              san: m.san,
-              uci: m.uci,
-              total: moveTotal,
-              percent: total > 0 ? Math.round((moveTotal / total) * 100) : 0,
-              white: moveTotal > 0 ? Math.round((m.white / moveTotal) * 100) : 0,
-              draws: moveTotal > 0 ? Math.round((m.draws / moveTotal) * 100) : 0,
-              black: moveTotal > 0 ? Math.round((m.black / moveTotal) * 100) : 0,
-            }
-          })
-          .sort((a, b) => b.total - a.total)
-
-        explorerError.value = ""
-        explorerLoading.value = false
-        return
-
-    } catch (error) {
-        if (attempt < maxAttempts - 1) {
-          await new Promise(r => setTimeout(r, backoffMs[attempt]))
-          continue
-        }
-        console.warn("Explorer fetch failed:", error)
-        explorerError.value = "No connection to explorer"
+      if (response.status === 204) {
+        opening.value = "No master games at this position"
+        openingEco.value = ""
         explorerStats.value = null
         explorerMoves.value = []
+        explorerError.value = ""
+        return
+      }
+
+      if (!response.ok) {
+        explorerError.value = `Explorer error (${response.status})`
+        explorerStats.value = null
+        explorerMoves.value = []
+        return
+      }
+
+      const data = await response.json()
+
+      if (data.opening) {
+          opening.value = data.opening.name
+          openingEco.value = data.opening.eco
+      } else {
+          opening.value = uciList.length === 0 ? "Starting position" : "Out of book"
+          openingEco.value = ""
+      }
+
+      const total = (data.white ?? 0) + (data.draws ?? 0) + (data.black ?? 0)
+      explorerStats.value = total > 0 ? {
+          white: Math.round((data.white / total) * 100),
+          draws: Math.round((data.draws / total) * 100),
+          black: Math.round((data.black / total) * 100),
+          total
+      } : null
+
+      explorerMoves.value = (data.moves ?? [])
+        .map(m => {
+          const moveTotal = (m.white ?? 0) + (m.draws ?? 0) + (m.black ?? 0)
+          return {
+            san: m.san,
+            uci: m.uci,
+            total: moveTotal,
+            percent: total > 0 ? Math.round((moveTotal / total) * 100) : 0,
+            white: moveTotal > 0 ? Math.round((m.white / moveTotal) * 100) : 0,
+            draws: moveTotal > 0 ? Math.round((m.draws / moveTotal) * 100) : 0,
+            black: moveTotal > 0 ? Math.round((m.black / moveTotal) * 100) : 0,
+          }
+        })
+        .sort((a, b) => b.total - a.total)
+
+      explorerError.value = ""
+
+    } catch (error) {
+      console.warn("Explorer fetch failed:", error)
+      explorerError.value = "No connection to explorer"
+      explorerStats.value = null
+      explorerMoves.value = []
+    } finally {
+      explorerLoading.value = false
     }
   }
-
-  explorerLoading.value = false
-}
 
   // Clicking a row in the explorer plays that move on the board
   function playExplorerMove(uci) {
