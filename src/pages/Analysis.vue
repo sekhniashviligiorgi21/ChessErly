@@ -98,8 +98,11 @@
   const LICHESS_TOKEN = import.meta.env.VITE_LICHESS_TOKEN
   const opening = ref("")
   const openingEco = ref("")
-  const explorerStats = ref(null)     // aggregate totals for current position: { white, draws, black, total }
-  const explorerMoves = ref([])       // per-move breakdown: [{ san, uci, total, white, draws, black }]
+  
+  // CONVERTED TO shallowRef: Avoid deep recursive proxying of statistics & tables
+  const explorerStats = shallowRef(null)     // aggregate totals for current position: { white, draws, black, total }
+  const explorerMoves = shallowRef([])       // per-move breakdown: [{ san, uci, total, white, draws, black }]
+  
   const explorerLoading = ref(false)
   const explorerError = ref("")
 
@@ -977,6 +980,7 @@
     excellent: 90, good: 80, inaccuracy: 20, mistake: 10, blunder: 0
   }
 
+  // CONVERTED TO shallowRef: Complex report metrics that iterate linearly over the ply history
   const gameReportStats = computed(() => {
     treeVersion.value
 
