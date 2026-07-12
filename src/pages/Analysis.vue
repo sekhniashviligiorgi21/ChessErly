@@ -20,7 +20,7 @@
     explorerTitle.value.style.backgroundColor = passiveColor.value
 
     setOnLichessRateLimited(() => {
-      showToast("Lichess is busy — using local analysis for now")
+      showToast("Using fully local analysis for now")
     })
 
     await startEngine();

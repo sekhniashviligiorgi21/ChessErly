@@ -14,8 +14,73 @@ let currentMultiPV = 3  // tracks what SF18 is currently configured for, so we o
 // looked at) are answered instantly from memory with zero network calls.
 // Network errors are NOT cached (see catch blocks below) since those might
 // succeed on retry; only real answers from Lichess are remembered.
-const cloudEvalCache = new Map()
-const bookMoveCache = new Map()
+//
+// Persisted to localStorage so the cache survives page reloads, not just the
+// current tab session — a big win for game review, since re-opening the same
+// (or a transposing) game later still gets instant lookups instead of a cold
+// cache. Capped at MAX_CACHE_ENTRIES per cache with oldest-first eviction
+// (Map preserves insertion order, so the first key is always the oldest —
+// cheap LRU-ish behavior with no extra bookkeeping needed).
+const CLOUD_EVAL_STORAGE_KEY = 'chesserly_cloudEvalCache'
+const BOOK_MOVE_STORAGE_KEY = 'chesserly_bookMoveCache'
+const MAX_CACHE_ENTRIES = 1500
+
+// Persisting on every single cache write would mean re-serializing the whole
+// map every time — fine at first, increasingly wasteful as it grows. Instead
+// we mark the cache "dirty" and flush to localStorage on a short debounce, so
+// a burst of writes (e.g. importing a 40-move game) collapses into one save.
+let cloudEvalDirty = false
+let bookMoveDirty = false
+let persistTimer = null
+const PERSIST_DEBOUNCE_MS = 1000
+
+function loadCacheFromStorage(storageKey) {
+    try {
+        const raw = localStorage.getItem(storageKey)
+        if (!raw) return new Map()
+        const entries = JSON.parse(raw)
+        if (!Array.isArray(entries)) return new Map()
+        return new Map(entries)
+    } catch (error) {
+        console.warn(`Failed to load ${storageKey} from localStorage:`, error)
+        return new Map()
+    }
+}
+
+function saveCacheToStorage(storageKey, cache) {
+    try {
+        // Oldest-first eviction: Map iteration order is insertion order, so
+        // slicing from the front drops the oldest entries once over the cap.
+        if (cache.size > MAX_CACHE_ENTRIES) {
+            const excess = cache.size - MAX_CACHE_ENTRIES
+            const keysToDelete = Array.from(cache.keys()).slice(0, excess)
+            for (const key of keysToDelete) cache.delete(key)
+        }
+        localStorage.setItem(storageKey, JSON.stringify(Array.from(cache.entries())))
+    } catch (error) {
+        // Quota exceeded, private-browsing restrictions, etc. — the in-memory
+        // cache still works fine for this session, we just lose persistence.
+        console.warn(`Failed to save ${storageKey} to localStorage:`, error)
+    }
+}
+
+function schedulePersist() {
+    if (persistTimer) return
+    persistTimer = setTimeout(() => {
+        persistTimer = null
+        if (cloudEvalDirty) {
+            saveCacheToStorage(CLOUD_EVAL_STORAGE_KEY, cloudEvalCache)
+            cloudEvalDirty = false
+        }
+        if (bookMoveDirty) {
+            saveCacheToStorage(BOOK_MOVE_STORAGE_KEY, bookMoveCache)
+            bookMoveDirty = false
+        }
+    }, PERSIST_DEBOUNCE_MS)
+}
+
+const cloudEvalCache = loadCacheFromStorage(CLOUD_EVAL_STORAGE_KEY)
+const bookMoveCache = loadCacheFromStorage(BOOK_MOVE_STORAGE_KEY)
 
 // ---- 429 backoff --------------------------------------------------------
 // If Lichess rate-limits us, we stop calling it entirely for a cooldown
@@ -148,12 +213,16 @@ async function isBookMove(movesList, move) {
 
         if (!response.ok) {
             bookMoveCache.set(key, false)
+            bookMoveDirty = true
+            schedulePersist()
             return false
         }
         
         const data = await response.json()
         const result = data.moves ? data.moves.some(m => m.uci === move) : false
         bookMoveCache.set(key, result)
+        bookMoveDirty = true
+        schedulePersist()
         return result
     } catch (error) {
         console.warn("Lichess book API fetch failed:", error)
@@ -222,12 +291,16 @@ async function getCloudEval(fen, multiPV) {
         // 404 means "not in the cloud db" — a normal, expected miss, not an error.
         if (!response.ok) {
             cloudEvalCache.set(fen, null)
+            cloudEvalDirty = true
+            schedulePersist()
             return null
         }
 
         const data = await response.json()
         if (!data || !Array.isArray(data.pvs) || data.pvs.length === 0) {
             cloudEvalCache.set(fen, null)
+            cloudEvalDirty = true
+            schedulePersist()
             return null
         }
 
@@ -258,6 +331,8 @@ async function getCloudEval(fen, multiPV) {
         }
 
         cloudEvalCache.set(fen, result)
+        cloudEvalDirty = true
+        schedulePersist()
         return result
     } catch (error) {
         console.warn("Lichess cloud eval fetch failed:", error)
@@ -474,10 +549,15 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
             const moverDeliversMate = moverIsWhite ? eval_after.value > 0 : eval_after.value < 0
 
             if (moverDeliversMate) {
+                // Forcing mate is never worse than "best". If the 2nd-best line here
+                // doesn't also force mate, this move is uniquely decisive — treat it
+                // the same way a normal brilliant_loss spike would be treated.
                 if (best_move === move && top_moves.length >= 2 && top_moves[1]?.score?.type !== "mate") {
                     accuracy = (best11 !== null && best11 !== best_move) ? "brilliant" : "great"
                 }
             } else if (eval_before?.type === "cp") {
+                // Mover blundered into getting mated. Only soften the label if they
+                // were already in a heavily lost position before this move.
                 const alreadyLostBig = moverIsWhite ? eval_before.value <= -700 : eval_before.value >= 700
                 const alreadyLostModerate = moverIsWhite ? eval_before.value <= -400 : eval_before.value >= 400
 
@@ -536,6 +616,8 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
             }
         }   
 
+
+
         return {
             depth: currentDepth,
             move_played: move,
@@ -551,6 +633,10 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
         }
     }
 
+    // "after" position: same cloud-first approach. Cloud eval never triggers
+    // onUpdate mid-search (there's nothing incremental about a cache hit — it's
+    // instant), so we call onUpdate manually once with the cloud result if we
+    // got one, keeping the same "live update" contract callers already rely on.
     let afterFinal
     if (afterFen) {
         const cloud = await getCloudEval(afterFen, 3)
