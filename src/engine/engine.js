@@ -4,6 +4,7 @@ let sf = null
 let sf11 = null
 let analysisId = 0
 let currentResolve = null
+let currentMultiPV = 3  // tracks what SF18 is currently configured for, so we only send setoption when it actually changes
 
 
 export async function startEngine() {
@@ -17,6 +18,7 @@ export async function startEngine() {
             if (msg === "uciok") {
                 sf.postMessage("setoption name MultiPV value 3")
                 sf.postMessage("setoption name Hash value 128")
+                currentMultiPV = 3
                 sf.postMessage("isready")
             }
             if (msg === "readyok") {
@@ -99,7 +101,11 @@ async function isBookMove(movesList, move) {
     }
 }
 
-function analyzePosition(moves, depth, onUpdate = null, runsf11 = false) {
+// OPTIMIZED: multiPV is now a parameter. The "before" search only ever needs
+// best_move + second_best_eval (MultiPV 2), while the "after" search needs the
+// 3 lines actually shown in the UI (MultiPV 3). Narrower MultiPV means Stockfish
+// can prune more aggressively, so the before-search gets meaningfully cheaper.
+function analyzePosition(moves, depth, onUpdate = null, runsf11 = false, multiPV = 3) {
     const myId = analysisId
 
     return new Promise((resolve) => {
@@ -152,10 +158,11 @@ function analyzePosition(moves, depth, onUpdate = null, runsf11 = false) {
 
                 const mpNum = mp ? parseInt(mp[1]) : 1
                 const currentDepth = depthMatch ? parseInt(depthMatch[1]) : 0
-                const hasOnlyOneLine = mpNum === 1 && topMoves.length < 2
-                const hasOnlyTwoLines = mpNum === 2 && topMoves.length < 3
+                const isLastLine = mpNum === multiPV
+                const hasOnlyOneLine = mpNum === 1 && topMoves.length < 2 && multiPV >= 2
+                const hasOnlyTwoLines = mpNum === 2 && topMoves.length < 3 && multiPV >= 3
 
-                if (onUpdate && evaluation && currentDepth >= 10 && (mpNum === 3 || hasOnlyOneLine || hasOnlyTwoLines)) {
+                if (onUpdate && evaluation && currentDepth >= 10 && (isLastLine || hasOnlyOneLine || hasOnlyTwoLines)) {
                     onUpdate({ evaluation: { ...evaluation }, topMoves: [...topMoves], currentDepth })
                 }
             }
@@ -193,6 +200,14 @@ function analyzePosition(moves, depth, onUpdate = null, runsf11 = false) {
             }
         }
 
+        // OPTIMIZED: only send setoption when MultiPV actually needs to change —
+        // avoids a wasted UCI round-trip on every single call when consecutive
+        // calls happen to want the same value.
+        if (currentMultiPV !== multiPV) {
+            sf.postMessage(`setoption name MultiPV value ${multiPV}`)
+            currentMultiPV = multiPV
+        }
+
         sf.postMessage(moves.length > 0 ? `position startpos moves ${moves.join(" ")}` : "position startpos")
         sf.postMessage(`go depth ${depth}`)
         if (runsf11) {
@@ -207,7 +222,10 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null) {
 
     const [isBook, before] = await Promise.all([
         isBookMove(movesList, move),
-        analyzePosition(movesList, 10, null, true)
+        // OPTIMIZED: before-search only needs MultiPV 2 (best_move + second_best_eval),
+        // not 3 — narrower search here is pure win, nothing downstream uses a 3rd line
+        // from the before-position.
+        analyzePosition(movesList, 10, null, true, 2)
     ])
 
     if (analysisId !== myId || !before) return null
@@ -361,10 +379,14 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null) {
         }
     }
 
+    // "after" search stays at MultiPV 3 — this is the one the UI actually displays
+    // 3 lines from, so it keeps its full width.
     const afterFinal = await analyzePosition(
         afterMoves,
         depth,
-        onUpdate ? (data) => onUpdate(buildResult(data.evaluation, data.topMoves, data.currentDepth)) : null
+        onUpdate ? (data) => onUpdate(buildResult(data.evaluation, data.topMoves, data.currentDepth)) : null,
+        false,
+        3
     )
     if (!afterFinal) return null
 
