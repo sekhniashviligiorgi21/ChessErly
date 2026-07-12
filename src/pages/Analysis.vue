@@ -237,14 +237,7 @@
   const nodeMap = { 0: moveTree }
   const currentNode = shallowRef(moveTree)
 
-  // OPTIMIZED: row/cell keys are now derived purely from node identity (node.id),
-  // not from `rows.length` or other positional counters. Previously the key
-  // `row-${current.id}-${ply}-${depth}-${rows.length}` meant that inserting or
-  // deleting a move anywhere in the tree shifted `rows.length` for every row
-  // that came after it — even rows whose actual move data never changed. Vue
-  // couldn't reuse any of that DOM, so every edit repainted the entire moves
-  // list below the edit point. Keying on node.id alone means only genuinely
-  // new/removed/reordered nodes cause Vue to touch the DOM.
+
   const renderedMoves = computed(() => {
     treeVersion.value
     const rows = []
