@@ -5,7 +5,7 @@
   import 'vue3-chessboard/style.css'
   import Title from "../assets/Title.vue"
   import SettingsPanel from "../assets/SettingsPanel.vue"
-  import { startEngine, getEvaluation, cancelAnalysis } from "../engine/engine.js"
+  import { startEngine, getEvaluation, cancelAnalysis, setOnLichessRateLimited } from "../engine/engine.js"
   import { useRoute, useRouter } from 'vue-router'
 
   // Flag gates for preventing startup racing
@@ -18,6 +18,11 @@
     window.addEventListener('scroll', closeContextMenu, true)
     reportTitle.value.style.backgroundColor = passiveColor.value
     explorerTitle.value.style.backgroundColor = passiveColor.value
+
+    setOnLichessRateLimited(() => {
+      showToast("Lichess is busy — using local analysis for now")
+    })
+
     await startEngine();
     engineReady = true
     if (!route.query.moves){

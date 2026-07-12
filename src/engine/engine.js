@@ -6,6 +6,46 @@ let analysisId = 0
 let currentResolve = null
 let currentMultiPV = 3  // tracks what SF18 is currently configured for, so we only send setoption when it actually changes
 
+// ---- Lichess response caches -----------------------------------------
+// Keyed by position (fen) for cloud eval, and by "movesList|move" for book
+// lookups. Storing `null`/`false` misses too (not just hits) means we only
+// ever ask Lichess about a given position ONCE per session — repeat visits
+// (undo/redo, jumping around the tree, re-importing a game you've already
+// looked at) are answered instantly from memory with zero network calls.
+// Network errors are NOT cached (see catch blocks below) since those might
+// succeed on retry; only real answers from Lichess are remembered.
+const cloudEvalCache = new Map()
+const bookMoveCache = new Map()
+
+// ---- 429 backoff --------------------------------------------------------
+// If Lichess rate-limits us, we stop calling it entirely for a cooldown
+// window instead of hammering it move after move. During the cooldown,
+// isBookMove/getCloudEval short-circuit to a "miss" immediately (no fetch),
+// so getEvaluation transparently falls back to local Stockfish analysis —
+// same code path as a normal cache/data miss, just without the network hop.
+const LICHESS_COOLDOWN_MS = 60_000 // Lichess's own guidance: wait a full minute after a 429
+let lichessCooldownUntil = 0
+
+// UI hook: the app can register a callback to be notified when we enter
+// cooldown, so it can show a toast/banner. Kept as a simple callback rather
+// than an event system since there's only ever one listener (the analysis view).
+let onRateLimited = null
+export function setOnLichessRateLimited(callback) {
+    onRateLimited = callback
+}
+
+function isLichessOnCooldown() {
+    return Date.now() < lichessCooldownUntil
+}
+
+function enterLichessCooldown() {
+    const alreadyCoolingDown = isLichessOnCooldown()
+    lichessCooldownUntil = Date.now() + LICHESS_COOLDOWN_MS
+    if (!alreadyCoolingDown && onRateLimited) {
+        onRateLimited()
+    }
+}
+
 
 export async function startEngine() {
     return new Promise((resolve) => {
@@ -76,6 +116,16 @@ export function cancelAnalysis() {
 }
 
 async function isBookMove(movesList, move) {
+    // While on cooldown, skip Lichess entirely and report "not book" — this
+    // is the same shape as a normal miss, so getEvaluation's logic downstream
+    // doesn't need to know the difference.
+    if (isLichessOnCooldown()) return false
+
+    const key = `${movesList.join(",")}|${move}`
+    if (bookMoveCache.has(key)) {
+        return bookMoveCache.get(key)
+    }
+
     const bookList = movesList.join(",")
 
     const url = bookList 
@@ -90,12 +140,24 @@ async function isBookMove(movesList, move) {
                 'Accept': 'application/json'
             }
         })
-        if (!response.ok) return false
+
+        if (response.status === 429) {
+            enterLichessCooldown()
+            return false // don't cache — this isn't a real answer about the position
+        }
+
+        if (!response.ok) {
+            bookMoveCache.set(key, false)
+            return false
+        }
         
         const data = await response.json()
-        return data.moves ? data.moves.some(m => m.uci === move) : false
+        const result = data.moves ? data.moves.some(m => m.uci === move) : false
+        bookMoveCache.set(key, result)
+        return result
     } catch (error) {
         console.warn("Lichess book API fetch failed:", error)
+        // not cached — network errors might succeed on retry
         return false
     }
 }
@@ -126,7 +188,7 @@ function normalizeLine(line) {
     return line.map(normalizeCastlingUci)
 }
 
-// NEW: Lichess maintains a cloud database of positions already analyzed to high
+// Lichess maintains a cloud database of positions already analyzed to high
 // depth (this is how their site shows deep opening evals instantly — it's a
 // lookup, not a live search). We check it before ever spinning up a local
 // Stockfish search for a position. Returns the same {evaluation, topMoves,
@@ -134,6 +196,14 @@ function normalizeLine(line) {
 // (no cloud data, rate-limited, network error, etc.) so callers can transparently
 // fall back to local analysis.
 async function getCloudEval(fen, multiPV) {
+    // On cooldown: behave exactly like a cache/data miss so getEvaluation
+    // falls straight through to local Stockfish analysis without a fetch.
+    if (isLichessOnCooldown()) return null
+
+    if (cloudEvalCache.has(fen)) {
+        return cloudEvalCache.get(fen)
+    }
+
     const url = `https://lichess.org/api/cloud-eval?fen=${encodeURIComponent(fen)}&multiPv=${multiPV}`
 
     try {
@@ -143,11 +213,23 @@ async function getCloudEval(fen, multiPV) {
                 'Accept': 'application/json'
             }
         })
+
+        if (response.status === 429) {
+            enterLichessCooldown()
+            return null // don't cache — this isn't a real answer about the position
+        }
+
         // 404 means "not in the cloud db" — a normal, expected miss, not an error.
-        if (!response.ok) return null
+        if (!response.ok) {
+            cloudEvalCache.set(fen, null)
+            return null
+        }
 
         const data = await response.json()
-        if (!data || !Array.isArray(data.pvs) || data.pvs.length === 0) return null
+        if (!data || !Array.isArray(data.pvs) || data.pvs.length === 0) {
+            cloudEvalCache.set(fen, null)
+            return null
+        }
 
         // Lichess's cloud eval is always given from White's perspective already
         // (unlike our own UCI parsing, which needs the isBlackToMove flip) — the
@@ -168,19 +250,23 @@ async function getCloudEval(fen, multiPV) {
             }
         })
 
-        return {
+        const result = {
             evaluation: topMoves[0]?.score ?? null,
             topMoves,
             currentDepth: data.depth ?? 0,
             best11: null
         }
+
+        cloudEvalCache.set(fen, result)
+        return result
     } catch (error) {
         console.warn("Lichess cloud eval fetch failed:", error)
+        // not cached — network errors might succeed on retry
         return null
     }
 }
 
-// OPTIMIZED: multiPV is now a parameter. The "before" search only ever needs
+// multiPV is a parameter. The "before" search only ever needs
 // best_move + second_best_eval (MultiPV 2), while the "after" search needs the
 // 3 lines actually shown in the UI (MultiPV 3). Narrower MultiPV means Stockfish
 // can prune more aggressively, so the before-search gets meaningfully cheaper.
@@ -279,7 +365,7 @@ function analyzePosition(moves, depth, onUpdate = null, runsf11 = false, multiPV
             }
         }
 
-        // OPTIMIZED: only send setoption when MultiPV actually needs to change —
+        // only send setoption when MultiPV actually needs to change —
         // avoids a wasted UCI round-trip on every single call when consecutive
         // calls happen to want the same value.
         if (currentMultiPV !== multiPV) {
@@ -296,7 +382,7 @@ function analyzePosition(moves, depth, onUpdate = null, runsf11 = false, multiPV
     })
 }
 
-// NEW: tries the Lichess cloud-eval cache first; only spins up a local search
+// tries the Lichess cloud-eval cache first; only spins up a local search
 // (via analyzePosition) if the cloud has no data for this exact position. The
 // caller-supplied fen must match `moves` (we don't derive it ourselves here to
 // avoid pulling a chess.js dependency into this module) — see call sites below.
@@ -388,15 +474,10 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
             const moverDeliversMate = moverIsWhite ? eval_after.value > 0 : eval_after.value < 0
 
             if (moverDeliversMate) {
-                // Forcing mate is never worse than "best". If the 2nd-best line here
-                // doesn't also force mate, this move is uniquely decisive — treat it
-                // the same way a normal brilliant_loss spike would be treated.
                 if (best_move === move && top_moves.length >= 2 && top_moves[1]?.score?.type !== "mate") {
                     accuracy = (best11 !== null && best11 !== best_move) ? "brilliant" : "great"
                 }
             } else if (eval_before?.type === "cp") {
-                // Mover blundered into getting mated. Only soften the label if they
-                // were already in a heavily lost position before this move.
                 const alreadyLostBig = moverIsWhite ? eval_before.value <= -700 : eval_before.value >= 700
                 const alreadyLostModerate = moverIsWhite ? eval_before.value <= -400 : eval_before.value >= 400
 
@@ -455,8 +536,6 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
             }
         }   
 
-
-
         return {
             depth: currentDepth,
             move_played: move,
@@ -472,10 +551,6 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
         }
     }
 
-    // "after" position: same cloud-first approach. Cloud eval never triggers
-    // onUpdate mid-search (there's nothing incremental about a cache hit — it's
-    // instant), so we call onUpdate manually once with the cloud result if we
-    // got one, keeping the same "live update" contract callers already rely on.
     let afterFinal
     if (afterFen) {
         const cloud = await getCloudEval(afterFen, 3)
