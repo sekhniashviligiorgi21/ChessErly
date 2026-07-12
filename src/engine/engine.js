@@ -9,7 +9,7 @@ let currentMultiPV = 3  // tracks what SF18 is currently configured for, so we o
 
 export async function startEngine() {
     return new Promise((resolve) => {
-        sf = new Worker('/stockfish/stockfish-18-lite-single.js')
+        sf = new Worker('/stockfish/stockfish-18-lite.js')
         sf11 = new Worker('/stockfish/stockfish.js')
 
         // Initialize SF18
@@ -17,7 +17,7 @@ export async function startEngine() {
             const msg = e.data
             if (msg === "uciok") {
                 sf.postMessage("setoption name MultiPV value 3")
-                sf.postMessage("setoption name Hash value 128")
+                sf.postMessage("setoption name threads value 2")
                 currentMultiPV = 3
                 sf.postMessage("isready")
             }
