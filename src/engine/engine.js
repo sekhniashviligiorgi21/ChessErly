@@ -100,6 +100,32 @@ async function isBookMove(movesList, move) {
     }
 }
 
+// Lichess's cloud-eval PVs are given in UCI_Chess960 format (per their own
+// database docs), which encodes castling as "king captures own rook" — e.g.
+// e1h1 for White short castling, e1a1 for White long castling — instead of
+// the standard UCI e1g1/e1c1 that chess.js expects. Feeding e1h1 straight
+// into chess.js's .move() throws "Invalid move: e1h1", which was silently
+// breaking uciLine/uciSecondLine/uciThirdLine mid-call (and the "before"
+// FEN replay logic downstream) whenever a cloud-eval line included castling —
+// that's the root cause of the frozen/stale display after a cloud hit.
+// Only these four exact king-home-square-to-rook-home-square strings are
+// rewritten, so this can't misfire: a king can never legally reach a1/h1/a8/h8
+// from e1/e8 in a single real move except via castling.
+const CASTLING_UCI_960_TO_STANDARD = {
+    'e1h1': 'e1g1', // White short castle
+    'e1a1': 'e1c1', // White long castle
+    'e8h8': 'e8g8', // Black short castle
+    'e8a8': 'e8c8', // Black long castle
+}
+
+function normalizeCastlingUci(uci) {
+    return CASTLING_UCI_960_TO_STANDARD[uci] ?? uci
+}
+
+function normalizeLine(line) {
+    return line.map(normalizeCastlingUci)
+}
+
 // NEW: Lichess maintains a cloud database of positions already analyzed to high
 // depth (this is how their site shows deep opening evals instantly — it's a
 // lookup, not a live search). We check it before ever spinning up a local
@@ -128,7 +154,9 @@ async function getCloudEval(fen, multiPV) {
         // API docs specify eval/mate values are white-relative, matching how the
         // rest of this file represents `evaluation.value`.
         const topMoves = data.pvs.map((pv) => {
-            const line = (pv.moves || '').split(' ').filter(Boolean)
+            // normalizeLine rewrites Chess960-style castling UCI (e1h1 etc.) to
+            // standard UCI (e1g1 etc.) before this line ever reaches chess.js.
+            const line = normalizeLine((pv.moves || '').split(' ').filter(Boolean))
             const score = typeof pv.mate === 'number'
                 ? { type: 'mate', value: pv.mate }
                 : { type: 'cp', value: pv.cp ?? 0 }
