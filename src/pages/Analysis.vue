@@ -1847,10 +1847,6 @@
       cursor: not-allowed;
   }
 
-  .reversetip, .undotip, .redotip, .resettip {
-      display: none;
-  }
-
   .reverse:hover:not(:disabled), 
   .undo:hover:not(:disabled), 
   .redo:hover:not(:disabled), 
