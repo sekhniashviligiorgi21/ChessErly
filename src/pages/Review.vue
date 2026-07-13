@@ -326,30 +326,27 @@
 
   .page-layout {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    /* Force the layout to cover exactly the full viewport */
-    height: 100vh;
-    width: 100vw;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column; /* Stack Title and Content vertically on mobile */
+    padding: clamp(0.5rem, 3vw, 1rem);
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+    justify-self: center;
+    max-width: 1200px;
+    margin: 0 auto;
     box-sizing: border-box;
-    overflow: hidden; /* Prevents the entire page from scrolling */
   }
 
   @media (min-width: 768px) {
     .page-layout {
-      flex-direction: row; /* Put Title on left, Content on right for desktop */
+      grid-template-columns: auto 1fr;
+      gap: 1.5rem;
     }
   }
 
   .content-area {
-    flex: 1; /* Dynamically consumes all remaining space not occupied by Title */
     display: flex;
-    align-items: center;      /* Vertically center the card */
-    justify-content: center;  /* Horizontally center the card */
-    padding: clamp(1rem, 4vw, 2rem);
-    min-height: 0; /* Ensures flexbox scrolling works internally */
+    justify-content: center;
+    width: 100%;
     min-width: 0;
   }
 
@@ -360,9 +357,6 @@
     padding: clamp(1.25rem, 3vw, 1.75rem);
     width: 100%;
     max-width: 30rem;
-    /* Allows the card to scroll internally if the screen height is too small */
-    max-height: 100%;
-    overflow-y: auto;
     box-sizing: border-box;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 18px;

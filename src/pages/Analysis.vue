@@ -8,6 +8,17 @@
   import { startEngine, getEvaluation, cancelAnalysis, setOnLichessRateLimited } from "../engine/engine.js"
   import { useRoute, useRouter } from 'vue-router'
 
+
+  const currentTheme = ref(localStorage.getItem('chesslab_theme') || 'brown')
+
+  watch(currentTheme, (newTheme) => {
+    document.documentElement.setAttribute('data-theme', newTheme)
+    localStorage.setItem('chesslab_theme', newTheme)
+  }, { immediate: true })
+
+  const activeColor = ref('var(--btn-active)')
+  const passiveColor = ref('var(--btn-idle)')
+
   // Flag gates for preventing startup racing
   let boardReady = false
   let engineReady = false 
@@ -942,7 +953,7 @@
       getAccuracy()
   }
 
-  // OPTIMIZED: Compiles and batch updates exactly ONE visual tree structure cycle at the loop finish
+  // Compiles and batch updates exactly ONE visual tree structure cycle at the loop finish
   async function loadImportedGame(uciList) {
     isImporting.value = true
     importCancelled = false
@@ -1047,6 +1058,7 @@
     v-model:targetDepth="targetDepth"
     v-model:soundOn="soundOn"
     v-model:showBestArrow="showBestArrow"
+    v-model:boardTheme="currentTheme"
     @depthChanged="onDepthChange"
   />
 
@@ -1383,7 +1395,6 @@
   .board-wrapper {
     position: relative;
     width: 100%;
-    /* Controls the master width for the board, evalbar, AND tools together */
     max-width: min(95vw, 38rem); 
     min-width: 0;
     margin: 0 auto;
@@ -1395,11 +1406,10 @@
     flex: 1 1 auto;
     min-width: 0;
     position: relative;
-    display: flex;             /* Makes the board fit exact bounds */
-    flex-direction: column;    /* Removes invisible trailing vertical space */
+    display: flex;
+    flex-direction: column;
   }
 
-  /* Force the library container instance to fit perfectly within the flex column boundaries */
   .game-board {
     width: 100% !important;
     height: auto !important;
@@ -1407,7 +1417,6 @@
     display: block;
   }
 
-  /* Constrain the inner chessground wrapper element to match the layout parent */
   :deep(.cg-wrap) {
     overflow: hidden;
     width: 100% !important;
@@ -1419,7 +1428,7 @@
   .board-row {
     display: flex;
     justify-content: center;
-    gap: 0.75rem; /* physical gap separation */
+    gap: 0.75rem;
     width: 100%;
   }
 
@@ -1442,26 +1451,24 @@
     box-shadow: inset 0 2px 5px rgba(0,0,0,0.5);
   }
 
-  /* --- Player bar (imported game info) --- */
   .player-bar {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     padding: 0.35rem 0.7rem;
-    margin-bottom: 0.2rem;      /* Tighter gap to the board */
+    margin-bottom: 0.2rem;
     border-radius: 8px;
     background: rgba(0, 0, 0, 0.22);
     color: #f4f0e3;
     font-family: 'Inter', sans-serif;
     font-size: clamp(0.82rem, 1.8vw, 0.95rem);
-    width: 100%;                /* Forces parallel alignment */
+    width: 100%;
     box-sizing: border-box;
   }
 
-  /* Specific spacing for the bottom player name */
   .player-bar.bottom {
     margin-bottom: 0;
-    margin-top: 0.2rem;         /* Pulls it up close to the evalbar bottom */
+    margin-top: 0.2rem;
   }
 
   .player-color-dot {
@@ -1493,7 +1500,6 @@
     flex-shrink: 0;
   }
 
-  /* Moves History Layout */
   .moves {
     margin-top: 10px;
     background: linear-gradient(145deg, #8b5a32, #6d4524);
@@ -1528,7 +1534,7 @@
     scroll-behavior: smooth;
   }
 
-  .movesButtons{
+  .movesButtons {
     display: flex;
     justify-content: center;
     gap: 0.5rem;
@@ -1652,7 +1658,6 @@
 
   @keyframes thinkingPulse { 0%, 100% { opacity: 0.35; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1.15); } }
 
-  /* --- Import / Analysis Loading Overlay --- */
   .analysis-loading-overlay {
     position: fixed;
     inset: 0;
@@ -1812,14 +1817,14 @@
     justify-content: center;
     align-items: center;
     min-height: 3.2rem;
-    width: 100%;  
+    width: 100%;
     box-sizing: border-box;
     background: linear-gradient(145deg, #8b5a32, #6d4524);
     border: 2px solid rgba(182, 173, 144, 0.4);
     padding: 0.5rem 1rem;
     border-radius: 10px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-    margin: 0.4rem 0 0 0;  
+    margin: 0.4rem 0 0 0;
     flex-wrap: wrap;
     position: relative;
   }
@@ -1837,7 +1842,6 @@
     flex-shrink: 0;
   }
 
-  /* --- Navigation & Control Buttons --- */
   .reverse:disabled, 
   .undo:disabled, 
   .redo:disabled, 
@@ -1856,11 +1860,6 @@
       background: linear-gradient(145deg, #9d6640, #7d5530);
       border-color: rgba(232, 232, 208, 0.6);
       box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
-  }
-
-  @keyframes fadeIn {
-      from { opacity: 0; }
-      to { opacity: 0.8; }
   }
 
   .blackeval, .whiteeval {
@@ -1889,7 +1888,6 @@
       z-index: 10;
   }
 
-/* --- Move & Accuracy Data --- */
   .accuracydescribtion {
       font-weight: 500;
       text-align: center;
@@ -1961,7 +1959,6 @@
   .line-move { cursor: pointer; padding: 0 2px; border-radius: 4px; }
   .line-move:hover { background: rgba(103, 122, 228, 0.3); }
 
-  /* --- Share & Toasts --- */
   .sharebar {
       display: flex;
       justify-content: center;
@@ -2144,38 +2141,36 @@
     flex-shrink: 0;
   }
 
-  /* --- Tab buttons: fix overflow --- */
-.movesButtons {
-  display: flex;
-  justify-content: center;
-  gap: 0.4rem;
-  padding: 0 0.5rem;
-}
+  .movesButtons {
+    display: flex;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0 0.5rem;
+  }
 
-.movehistory {
-  font-family: serif;
-  flex: 1 1 0;
-  min-width: 0;
-  text-align: center;
-  color: #f5f5dc;
-  font-weight: 700;
-  text-transform: uppercase;
-  margin: 12px 0;
-  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
-  letter-spacing: 1px;
-  padding: 0.5rem 0.4rem;
-  border-radius: 5px;
-  background-color: #5e3c20;
-  border: none;
-  font-size: clamp(0.7rem, 2vw, 0.95rem);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-  transition: background-color 0.15s ease;
-}
+  .movehistory {
+    font-family: serif;
+    flex: 1 1 0;
+    min-width: 0;
+    text-align: center;
+    color: #f5f5dc;
+    font-weight: 700;
+    text-transform: uppercase;
+    margin: 12px 0;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+    letter-spacing: 1px;
+    padding: 0.5rem 0.4rem;
+    border-radius: 5px;
+    background-color: #5e3c20;
+    border: none;
+    font-size: clamp(0.7rem, 2vw, 0.95rem);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+  }
 
-/* --- Explorer tab --- */
   .explorer {
     padding: 0.6rem 0.8rem 1rem;
     box-sizing: border-box;

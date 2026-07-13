@@ -5,9 +5,8 @@
   const router = useRouter()
   const route = useRoute()
 
-  const activeColor = "135deg, #414833, #333d29"
-  const idleColor = "135deg, #656d4a, #414833"
-
+  const activeColor = "var(--title-btn-active-1), var(--title-btn-active-2)"
+  const idleColor = "var(--title-btn-idle-1), var(--title-btn-idle-2)"
 
   function bgColor(buttonName) {
     return activeButton.value === buttonName ? activeColor : idleColor
@@ -88,7 +87,7 @@
 		height: clamp(25rem, 37rem, 45rem);
 		padding: 3%;
 		box-sizing: border-box;
-		background: linear-gradient(145deg, #8B5A32, #6D4524);
+		background: linear-gradient(145deg, var(--panel-1), var(--panel-2));
 		border-radius: 16px;
 		border: 1px solid rgba(255,255,255,0.08);
 		box-shadow: 0 15px 35px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.1);

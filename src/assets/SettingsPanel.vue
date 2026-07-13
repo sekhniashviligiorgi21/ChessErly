@@ -18,7 +18,17 @@
     'depthChanged'
   ])
 
-  const themes = ['brown', 'blue', 'green', 'purple', 'wood']
+  // Added structured themes for the dropdown
+  const themes = [
+    { value: 'brown', label: 'Classic Brown' },
+    { value: 'wood', label: 'Dark Wood' },
+    { value: 'blue', label: 'Ocean Blue' },
+    { value: 'purple', label: 'Amethyst' },
+    { value: 'green', label: 'Forest Green' },
+    { value: 'midnight', label: 'Midnight Dark' },
+    { value: 'slate', label: 'Cool Slate' },
+    { value: 'cherry', label: 'Deep Cherry' }
+  ]
 
   function close() {
     emit('update:isOpen', false)
@@ -46,6 +56,20 @@
               @input="emit('update:targetDepth', Number($event.target.value))"
               @change="emit('depthChanged')"
             />
+          </div>
+
+          <!-- Theme Selector Added Here -->
+          <div class="setting-group">
+            <label>App Theme</label>
+            <select 
+              class="theme-select" 
+              :value="boardTheme" 
+              @change="emit('update:boardTheme', $event.target.value)"
+            >
+              <option v-for="t in themes" :key="t.value" :value="t.value">
+                {{ t.label }}
+              </option>
+            </select>
           </div>
 
           <!-- Toggles -->
@@ -138,4 +162,21 @@
 
   .fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; }
   .fade-enter-from, .fade-leave-to { opacity: 0; }
+
+  .theme-select {
+    background: rgba(0,0,0,0.3);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.2);
+    padding: 0.5rem;
+    border-radius: 8px;
+    outline: none;
+    width: 100%;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .theme-select option {
+    background: #1a1a1a;
+    color: #fff;
+  }
+  .highlight { color: var(--text-highlight, #d9b382); font-family: monospace; }
 </style>
