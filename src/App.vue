@@ -85,7 +85,7 @@
     --title-btn-active-1: #2c3e2e; --title-btn-active-2: #1b261c;
     --title-btn-idle-1: #4a634a; --title-btn-idle-2: #2c3e2e;
     --text-highlight: #f0d0a3;
-    --board-light: #e0c99a; --board-dark: #8a6338;
+    --board-light: #e0c99a; --board-dark: #2f2114;
   }
 
   [data-theme="blue"] {
