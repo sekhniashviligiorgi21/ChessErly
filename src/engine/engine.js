@@ -4,7 +4,7 @@ let sf = null
 let sf11 = null
 let analysisId = 0
 let currentResolve = null
-let currentMultiPV = 3 // tracks what SF18 is currently configured for
+let currentMultiPV = 3 // tracks what SF17 is currently configured for
 
 // ---- Storage Keys -----------------------------------------------------
 const CLOUD_EVAL_STORAGE_KEY = 'chesserly_cloudEvalCache'
@@ -235,7 +235,7 @@ function normalizeLine(line) {
 async function getCloudEval(fen, multiPV) {
     if (isLichessOnCooldown()) return null
 
-    // FIX: Include multiPV in the cache key to avoid collisions between 
+    // Include multiPV in the cache key to avoid collisions between 
     // "before" (MultiPV 2) and "after" (MultiPV 3) position requests.
     const cacheKey = `${fen}|${multiPV}`
 
@@ -424,7 +424,7 @@ function analyzePosition(moves, depth, onUpdate = null, runsf11 = false, multiPV
         sf.postMessage(`go depth ${depth}`)
         if (runsf11) {
             sf11.postMessage(moves.length > 0 ? `position startpos moves ${moves.join(" ")}` : "position startpos")
-            sf11.postMessage(`go depth 8`)
+            sf11.postMessage(`go depth 9`)
         }
     })
 }

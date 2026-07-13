@@ -242,7 +242,7 @@
   const nodeMap = { 0: moveTree }
   const currentNode = shallowRef(moveTree)
 
-  // OPTIMIZED: row/cell keys are now derived purely from node identity (node.id),
+  // row/cell keys are now derived purely from node identity (node.id),
   // not from `rows.length` or other positional counters. Previously the key
   // `row-${current.id}-${ply}-${depth}-${rows.length}` meant that inserting or
   // deleting a move anywhere in the tree shifted `rows.length` for every row
@@ -1121,12 +1121,11 @@
         </div>
         
         <div class="boardtools">
-          <button class="jumpstart" @click="goToStart" :disabled="isImporting || currentNode.parent === null" title="Jump to start">⏮</button>
-          <button class="undo" @click="undoAccuracy" title="previous" :disabled="isImporting || currentNode.parent === null">↶</button>
+          <button class="jumpstart" @click="goToStart" :disabled="isImporting || currentNode.parent === null" title="Jump to start"><--</button>
+          <button class="undo" @click="undoAccuracy" title="previous" :disabled="isImporting || currentNode.parent === null"><</button>
           <button class="reverse" @click="flipBoard" title="flip board">↳↰</button>
-          <button class="redo" title="next" @click="redoAccuracy" :disabled="isImporting || currentNode.children.length === 0">↷</button>
-          <button class="jumpend" @click="goToEnd" :disabled="isImporting || currentNode.children.length === 0" title="Jump to end">⏭</button>
-          <button class="reset" @click="resetAccuracy" title="reset">🗘</button>
+          <button class="redo" title="next" @click="redoAccuracy" :disabled="isImporting || currentNode.children.length === 0">></button>
+          <button class="jumpend" @click="goToEnd" :disabled="isImporting || currentNode.children.length === 0" title="Jump to end">--></button>
         </div>
       </div>
     </div>
@@ -1825,7 +1824,7 @@
     position: relative;
   }
 
-  .reverse, .undo, .redo, .reset, .jumpstart, .jumpend {
+  .reverse, .undo, .redo, .jumpstart, .jumpend {
     background-color: #9d6639;
     width: clamp(35px, 8vw, 40px);
     height: clamp(35px, 8vw, 40px);
@@ -1850,29 +1849,6 @@
 
   .reversetip, .undotip, .redotip, .resettip {
       display: none;
-  }
-
-  @media (min-width: 768px) {
-      .reversetip, .undotip, .redotip, .resettip {
-          display: block;
-          opacity: 0;
-          position: absolute;
-          font-size: clamp(14px, 2vw, 17px);
-          padding: 0.5rem;
-          border-radius: 10px;
-          background-color: #242424;
-          margin-top: -4.5rem;
-          transform: translateX(-50%);
-          left: 50%;
-          pointer-events: none;
-      }
-
-      .reverse:hover + .reversetip, 
-      .undo:hover + .undotip, 
-      .redo:hover + .redotip, 
-      .reset:hover + .resettip {
-          animation: fadeIn 0.4s forwards 0.3s;
-      }
   }
 
   .reverse:hover:not(:disabled), 

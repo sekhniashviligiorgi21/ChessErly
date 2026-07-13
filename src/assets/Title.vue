@@ -36,7 +36,7 @@
 
 <template>
   <div class="title-container">
-    <h1 class="title">♔ ChessErly</h1>
+    <h1 class="title">♔ ChessErrly</h1>
 
     <button
       class="btn"
