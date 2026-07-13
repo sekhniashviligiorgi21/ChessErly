@@ -253,14 +253,6 @@
   const nodeMap = { 0: moveTree }
   const currentNode = shallowRef(moveTree)
 
-  // row/cell keys are now derived purely from node identity (node.id),
-  // not from `rows.length` or other positional counters. Previously the key
-  // `row-${current.id}-${ply}-${depth}-${rows.length}` meant that inserting or
-  // deleting a move anywhere in the tree shifted `rows.length` for every row
-  // that came after it — even rows whose actual move data never changed. Vue
-  // couldn't reuse any of that DOM, so every edit repainted the entire moves
-  // list below the edit point. Keying on node.id alone means only genuinely
-  // new/removed/reordered nodes cause Vue to touch the DOM.
   const renderedMoves = computed(() => {
     treeVersion.value
     const rows = []
@@ -295,8 +287,6 @@
         const mainReply = current.children[0] ?? null
 
         rows.push({
-          // Row key is now anchored to the current node's id (stable across
-          // insertions/deletions elsewhere in the tree) instead of rows.length.
           key: `row-${current.id}`,
           depth,
           cells: [
@@ -326,8 +316,6 @@
     return rows
   })
 
-  const activeColor = ref('#5e3c20')
-  const passiveColor = ref('#8d5b33')
   const movesTitle = ref(null)
   const reportTitle = ref(null)
 
@@ -352,7 +340,6 @@
     if (reportTitle.value) reportTitle.value.style.backgroundColor = passiveColor.value
   }
 
-  // OPTIMIZED: Clear visual footprint dependencies perfectly on deletion
   function deleteMove(nodeId) {
     const node = nodeMap[nodeId]
     if (!node || node.parent === null) return 
@@ -514,7 +501,6 @@
     await tryLoadImportedGame()
   }
 
-  // OPTIMIZED: Decouples existing variation trees from causing forced layout thrashing
   async function handleBothMoves(move) {
     const uci = move.promotion ? `${move.from}${move.to}${move.promotion}` : `${move.from}${move.to}`
     const sanMove = chess.move({ from: move.from, to: move.to, promotion: move.promotion ?? undefined })
@@ -543,7 +529,6 @@
     await getAccuracy()
   }
 
-  // OPTIMIZED: Pure navigation updates currentNode smoothly without dumping tree caches
   function undoMove() {
     lastMoveSquare.value = null
     lastMoveAccuracy.value = null
@@ -554,7 +539,6 @@
     boardAPI.value.setPosition(chess.fen())
   }
 
-  // OPTIMIZED: Standard forward navigation leaves layout caches unthrashed
   function redoMove() {
     lastMoveSquare.value = null
     lastMoveAccuracy.value = null
@@ -570,7 +554,6 @@
   function undoAccuracy() { undoMove(); getAccuracy(); }
   function redoAccuracy() { redoMove(); getAccuracy(); }
 
-  // OPTIMIZED: Node jumping highlights components natively via currentNode binding
   function jumpToNode(nodeId) {
     const node = nodeMap[nodeId]
     if (!node || node === currentNode.value) return
@@ -623,7 +606,6 @@
     moveData.value = null
   }
 
-  // OPTIMIZED: Cache hits stay fast, layout operations are entirely gated away during import loops
   async function getAccuracy() {
     await cancelAnalysis() 
     
@@ -652,11 +634,6 @@
     bestArrowSquares.value = null
     if (showBestArrow.value && boardAPI.value) boardAPI.value.hideMoves()
 
-    // beforeFen/afterFen let getEvaluation check Lichess's cloud-eval cache
-    // before falling back to a local Stockfish search. currentNode.value.fen is
-    // always the "after" position (the position resulting from the move that
-    // got us to this node); its parent's fen (or the root fen if we're at the
-    // very start) is the "before" position.
     const beforeFen = currentNode.value.parent ? currentNode.value.parent.fen : moveTree.fen
     const afterFen = currentNode.value.fen
 
@@ -775,19 +752,8 @@
     }
   }
 
-  // OPTIMIZED: previously replayed the ENTIRE game from move 1 through chess.js
-  // every single time this ran (moveData.value.moves_list.slice(0, -1).forEach
-  // bestChess.move(...)), which on move 40 meant 39 replayed moves just to
-  // convert one UCI string to SAN — on every analysis update, including cache
-  // hits during plain navigation. It now loads the *current* position's FEN
-  // directly (same pattern already used by uciLine/uciSecondLine/uciThirdLine)
-  // and plays only the single best_move on top of that — O(1) instead of O(game length).
   function sanBest() {
     if (!moveData.value?.best_move) return
-    // moves_list is the move list *after* the played move, so the position
-    // the best_move should be evaluated from is the one before that last move —
-    // i.e. currentNode's parent's fen (the "before" position), matching what
-    // moves_list.slice(0, -1) used to reconstruct the slow way.
     const baseFen = currentNode.value.parent ? currentNode.value.parent.fen : moveTree.fen
     bestChess.load(baseFen)
     const bestMoveBefore = moveData.value.best_move
@@ -908,7 +874,6 @@
       }
   }
 
-  // OPTIMIZED: Gated structure avoids compiling layout configurations mid-stream
   function applyUciMove(uci) {
       const from = uci.slice(0, 2)
       const to = uci.slice(2, 4)
@@ -953,7 +918,6 @@
       getAccuracy()
   }
 
-  // Compiles and batch updates exactly ONE visual tree structure cycle at the loop finish
   async function loadImportedGame(uciList) {
     isImporting.value = true
     importCancelled = false
@@ -1096,7 +1060,6 @@
         
         <div class="board-row">
           <div class="board-col">
-            <!-- Added specific class to handle overflow bounds -->
             <TheChessboard 
               class="game-board"
               @move="handleBothMoves" 
@@ -1186,7 +1149,6 @@
       </div>
       <div class="moves">
         
-        <!-- UPDATED TABS SECTION -->
         <div class="movesButtons">
           <button class="movehistory" @click="changeActiveToMoves()" ref="movesTitle">Moves</button>
           <button class="movehistory" @click="changeActiveToReport()" ref="reportTitle">Report</button>
@@ -1425,6 +1387,19 @@
     border-radius: 8px;
   }
 
+  /* Overrides chessground's default board-image background with a themed
+     checkerboard tied to --board-light / --board-dark, so the board squares
+     recolor along with the rest of the UI when the theme changes. */
+  :deep(cg-board) {
+    background: conic-gradient(
+      var(--board-dark) 90deg,
+      var(--board-light) 90deg 180deg,
+      var(--board-dark) 180deg 270deg,
+      var(--board-light) 270deg
+    ) !important;
+    background-size: 25% 25% !important;
+  }
+
   .board-row {
     display: flex;
     justify-content: center;
@@ -1502,7 +1477,7 @@
 
   .moves {
     margin-top: 10px;
-    background: linear-gradient(145deg, #8b5a32, #6d4524);
+    background: linear-gradient(145deg, var(--panel-1), var(--panel-2));
     border-radius: 16px;
     width: 100%;
     max-width: 500px;
@@ -1524,7 +1499,7 @@
     padding: 12px;
     width: 100%;
     box-sizing: border-box;
-    background: linear-gradient(135deg, #a57548, #7d5530);
+    background: linear-gradient(135deg, var(--list-1), var(--list-2));
     border-radius: 14px;
     font-size: clamp(0.9rem, 2vw, 1rem);
     box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.25);
@@ -1606,7 +1581,7 @@
     max-width: 500px;
     min-height: 200px;
     padding-bottom: 1rem;
-    background: linear-gradient(145deg, #8b5a32, #6d4524);
+    background: linear-gradient(145deg, var(--panel-1), var(--panel-2));
     box-sizing: border-box;
     box-shadow: 0 15px 35px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.1);
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1676,7 +1651,7 @@
     align-items: center;
     gap: 0.9rem;
     padding: 2rem 2.5rem;
-    background: linear-gradient(145deg, rgba(94, 60, 32, 0.92), rgba(45, 28, 15, 0.92));
+    background: linear-gradient(145deg, var(--panel-1), var(--panel-2));
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 18px;
     box-shadow: 0 20px 45px rgba(0, 0, 0, 0.5);
@@ -1694,7 +1669,7 @@
     inset: 0;
     border-radius: 50%;
     border: 3px solid transparent;
-    border-top-color: #d9b382;
+    border-top-color: var(--text-highlight);
     animation: spinRing 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
   }
 
@@ -1745,7 +1720,7 @@
   .loading-progress-fill {
     height: 100%;
     border-radius: 999px;
-    background: linear-gradient(90deg, #d9b382, #a8d97a);
+    background: linear-gradient(90deg, var(--text-highlight), #a8d97a);
     transition: width 0.3s ease;
   }
 
@@ -1806,7 +1781,7 @@
     letter-spacing: 2.5px;
     padding: 0.5rem 1.5rem;
     border-radius: 5px;
-    background-color: #5e3c20;
+    background-color: var(--btn-idle);
     border: none;
     font-size: clamp(1rem, 2vw, 1.2rem);
   }
@@ -1819,7 +1794,7 @@
     min-height: 3.2rem;
     width: 100%;
     box-sizing: border-box;
-    background: linear-gradient(145deg, #8b5a32, #6d4524);
+    background: linear-gradient(145deg, var(--panel-1), var(--panel-2));
     border: 2px solid rgba(182, 173, 144, 0.4);
     padding: 0.5rem 1rem;
     border-radius: 10px;
@@ -1830,7 +1805,7 @@
   }
 
   .reverse, .undo, .redo, .jumpstart, .jumpend {
-    background-color: #9d6639;
+    background-color: var(--btn-idle);
     width: clamp(35px, 8vw, 40px);
     height: clamp(35px, 8vw, 40px);
     border: none;
@@ -1857,7 +1832,7 @@
   .reset:hover, 
   .jumpstart:hover:not(:disabled), 
   .jumpend:hover:not(:disabled) {
-      background: linear-gradient(145deg, #9d6640, #7d5530);
+      background: linear-gradient(145deg, var(--panel-1), var(--panel-2));
       border-color: rgba(232, 232, 208, 0.6);
       box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
   }
@@ -2041,7 +2016,7 @@
 
   .report-col {
     min-width: 0;
-    background: linear-gradient(135deg, #a57548, #7d5530);
+    background: linear-gradient(135deg, var(--list-1), var(--list-2));
     border-radius: 14px;
     padding: 0.8rem 0.5rem;
     box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.25);
@@ -2161,7 +2136,7 @@
     letter-spacing: 1px;
     padding: 0.5rem 0.4rem;
     border-radius: 5px;
-    background-color: #5e3c20;
+    background-color: var(--btn-idle);
     border: none;
     font-size: clamp(0.7rem, 2vw, 0.95rem);
     white-space: nowrap;

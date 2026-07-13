@@ -360,7 +360,7 @@
     box-sizing: border-box;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 18px;
-    background: linear-gradient(145deg, #8b5a32, #6d4524);
+    background: linear-gradient(145deg, var(--panel-1), var(--panel-2));
     box-shadow: 0 15px 35px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.1);
   }
 
@@ -407,7 +407,7 @@
   .site-btn:hover, .mode-btn:hover { color: #f4f0e3; }
 
   .site-btn.active, .mode-btn.active {
-    background: #5e3c20;
+    background: var(--btn-active);
     color: #f5f5dc;
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
   }
@@ -450,8 +450,8 @@
 
   .input:focus {
     outline: none;
-    border-color: rgba(106, 209, 63, 0.6);
-    box-shadow: 0 0 0 2px rgba(106, 209, 63, 0.2);
+    border-color: var(--text-highlight);
+    box-shadow: 0 0 0 2px rgba(217, 179, 130, 0.2);
   }
 
   .import-btn {
@@ -461,7 +461,7 @@
     gap: 0.5rem;
     padding: 0.6rem 1.1rem;
     border-radius: 8px;
-    background: #41692e;
+    background: var(--btn-active);
     color: #f4f0e3;
     border: none;
     font-weight: 600;
@@ -472,7 +472,7 @@
     flex: 0 0 auto;
   }
 
-  .import-btn:hover:not(:disabled) { background: #4e824e; }
+  .import-btn:hover:not(:disabled) { background: var(--btn-idle); }
   .import-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
   .spinner {
@@ -524,8 +524,8 @@
   .game-row:hover { background: rgba(0, 0, 0, 0.3); }
 
   .game-row.selected {
-    background: rgba(106, 209, 63, 0.12);
-    border-color: rgba(106, 209, 63, 0.5);
+    background: rgba(255, 255, 255, 0.08);
+    border-color: var(--text-highlight);
   }
 
   .color-dot {
@@ -567,9 +567,11 @@
     flex-shrink: 0;
   }
 
-  .result.win { color: #6ad13f; }
-  .result.loss { color: #ff6b6b; }
-  .result.draw { color: #f2bc43; }
+  /* Win/loss/draw keep dedicated semantic colors (not theme-tinted), softened
+     from the previous bright green/red so they don't clash with muted themes. */
+  .result.win { color: #8fc06a; }
+  .result.loss { color: #d9736a; }
+  .result.draw { color: #d9b36a; }
 
   .selection-bar {
     display: flex;
@@ -578,9 +580,9 @@
     align-items: center;
     justify-content: space-between;
     padding: 0.7rem 0.9rem;
-    background: rgba(106, 209, 63, 0.12);
+    background: rgba(255, 255, 255, 0.06);
     border-radius: 10px;
-    border: 1px solid rgba(106, 209, 63, 0.4);
+    border: 1px solid var(--text-highlight);
   }
 
   .selection-info {
@@ -591,7 +593,7 @@
   }
 
   .selected-msg {
-    color: #a8d97a;
+    color: var(--text-highlight);
     font-weight: 700;
     font-size: 0.82rem;
     text-transform: uppercase;
@@ -611,14 +613,14 @@
     border-radius: 8px;
     font-weight: 700;
     color: #f4f0e3;
-    background: #41692e;
+    background: var(--btn-active);
     border: none;
     cursor: pointer;
     transition: background 0.2s ease;
     flex-shrink: 0;
   }
 
-  .analyse-btn:hover { background: #4e824e; }
+  .analyse-btn:hover { background: var(--btn-idle); }
 
   .empty {
     color: rgba(244, 240, 227, 0.6);
