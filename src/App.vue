@@ -1,8 +1,10 @@
 <script setup>
   import { ref } from 'vue' 
+  import AuthWidget from './assets/AuthWidget.vue'
 </script>
 
 <template>
+  <AuthWidget/>
   <RouterView/>
 </template>
 
