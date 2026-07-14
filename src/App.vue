@@ -45,25 +45,6 @@
     --board-dark: #4a4a4a;
   }
 
-  [data-theme="slate"] {
-    --bg-1: #2c3644; 
-    --bg-2: #3d4a5a; 
-    --bg-3: #4f5f70;
-    --panel-1: #3d4a5a; 
-    --panel-2: #2c3644;
-    --list-1: #4f5f70; 
-    --list-2: #3d4a5a;
-    --btn-active: #5b6d7e; 
-    --btn-idle: #728496;
-    --title-btn-active-1: #4f5f70; 
-    --title-btn-active-2: #3d4a5a;
-    --title-btn-idle-1: #728496; 
-    --title-btn-idle-2: #4f5f70;
-    --text-highlight: #cdd7e0;
-    --board-light: #dde3e8; 
-    --board-dark: #7c8ea0;
-  }
-
   [data-theme="wood"] {
     --bg-1: #241a12; --bg-2: #3a2818; --bg-3: #58402a;
     --panel-1: #4a3320; --panel-2: #2e2013;
@@ -75,50 +56,77 @@
     --board-light: #e0c99a; --board-dark: #2f2114;
   }
 
+  /* --- OVERHAULED THEMES BELOW --- */
+
   [data-theme="blue"] {
-    --bg-1: #16212e; --bg-2: #1f3145; --bg-3: #2a4560;
-    --panel-1: #24374c; --panel-2: #17222f;
-    --list-1: #2e4459; --list-2: #1e2d3d;
-    --btn-active: #3a5b7a; --btn-idle: #5484a8;
-    --title-btn-active-1: #274155; --title-btn-active-2: #1a2733;
-    --title-btn-idle-1: #5484a8; --title-btn-idle-2: #274155;
-    --text-highlight: #bcdcee;
-    --board-light: #e2ebf1; --board-dark: #5f83a0;
+    /* Deep slate/navy backgrounds */
+    --bg-1: #0f172a; --bg-2: #162032; --bg-3: #1e293b;
+    --panel-1: #162438; --panel-2: #0b1121;
+    --list-1: #1e2e45; --list-2: #131c2d;
+    /* Vibrant blue accents */
+    --btn-active: #1d4ed8; --btn-idle: #2563eb;
+    --title-btn-active-1: #1e3a8a; --title-btn-active-2: #172554;
+    --title-btn-idle-1: #3b82f6; --title-btn-idle-2: #2563eb;
+    --text-highlight: #93c5fd;
+    /* Classic pleasing blue chess board */
+    --board-light: #d8e1e8; --board-dark: #5e7d9e;
   }
 
   [data-theme="purple"] {
-    --bg-1: #1e1730; --bg-2: #2e2245; --bg-3: #3d2d5c;
-    --panel-1: #2f2347; --panel-2: #1e1730;
-    --list-1: #3d2d5c; --list-2: #2a2040;
-    --btn-active: #55407a; --btn-idle: #7a5fa3;
-    --title-btn-active-1: #453a5e; --title-btn-active-2: #332a45;
-    --title-btn-idle-1: #7a5fa3; --title-btn-idle-2: #453a5e;
-    --text-highlight: #cbb0e8;
-    --board-light: #ebe3f5; --board-dark: #8e72b3;
+    /* Muted charcoal/aubergine backgrounds */
+    --bg-1: #15101c; --bg-2: #1c1526; --bg-3: #281e36;
+    --panel-1: #20172e; --panel-2: #120d18;
+    --list-1: #2a1f3a; --list-2: #1b1325;
+    /* Royal amethyst accents */
+    --btn-active: #6b21a8; --btn-idle: #8b5cf6;
+    --title-btn-active-1: #4c1d95; --title-btn-active-2: #3b0764;
+    --title-btn-idle-1: #9333ea; --title-btn-idle-2: #7e22ce;
+    --text-highlight: #d8b4fe;
+    /* Lavender-tinted board */
+    --board-light: #e5dfee; --board-dark: #81669c;
   }
 
   [data-theme="green"] {
-    --bg-1: #182219; --bg-2: #223221; --bg-3: #2e4530;
-    --panel-1: #263a27; --panel-2: #172417;
-    --list-1: #33502f; --list-2: #22321f;
-    --btn-active: #3f5c3f; --btn-idle: #5c8a5c;
-    --title-btn-active-1: #33502f; --title-btn-active-2: #22321f;
-    --title-btn-idle-1: #5c8a5c; --title-btn-idle-2: #33502f;
-    --text-highlight: #b8dcae;
-    --board-light: #edf1e0; --board-dark: #6f9160;
+    /* Extremely dark desaturated forest backgrounds */
+    --bg-1: #111411; --bg-2: #161c16; --bg-3: #1f281f;
+    --panel-1: #192119; --panel-2: #0f120f;
+    --list-1: #212c21; --list-2: #161d16;
+    /* Clean, legible green accents */
+    --btn-active: #3f6341; --btn-idle: #578a57;
+    --title-btn-active-1: #243b25; --title-btn-active-2: #182919;
+    --title-btn-idle-1: #5c8a5c; --title-btn-idle-2: #4a754a;
+    --text-highlight: #86efac;
+    /* Classic iconic chess green board */
+    --board-light: #eaebd1; --board-dark: #739552;
   }
 
   [data-theme="cherry"] {
-    --bg-1: #240f0f; --bg-2: #401a1a; --bg-3: #5c2222;
-    --panel-1: #401a1a; --panel-2: #260f0f;
-    --list-1: #5c2222; --list-2: #401a1a;
-    --btn-active: #7a2f2f; --btn-idle: #a04545;
-    --title-btn-active-1: #543030; --title-btn-active-2: #3d2222;
-    --title-btn-idle-1: #6e4444; --title-btn-idle-2: #543030;
-    --text-highlight: #e8a898;
-    --board-light: #f0ddd3; --board-dark: #b06a58;
+    /* Very dark, warm charcoal backgrounds */
+    --bg-1: #1a1212; --bg-2: #241616; --bg-3: #301d1d;
+    --panel-1: #261717; --panel-2: #140d0d;
+    --list-1: #331e1e; --list-2: #211313;
+    /* Ruby/crimson accents */
+    --btn-active: #822828; --btn-idle: #ab3a3a;
+    --title-btn-active-1: #4a1818; --title-btn-active-2: #331010;
+    --title-btn-idle-1: #b84545; --title-btn-idle-2: #9c3535;
+    --text-highlight: #fca5a5;
+    /* Warm terracotta and cream board */
+    --board-light: #edd8d3; --board-dark: #b35952;
   }
 
+  [data-theme="slate"] {
+    /* Cool, metallic dark greys */
+    --bg-1: #13151a; --bg-2: #1b1e24; --bg-3: #242830;
+    --panel-1: #1d2027; --panel-2: #101216;
+    --list-1: #262b34; --list-2: #191c22;
+    /* Muted steel-blue accents */
+    --btn-active: #475569; --btn-idle: #64748b;
+    --title-btn-active-1: #2d3748; --title-btn-active-2: #1a202c;
+    --title-btn-idle-1: #718096; --title-btn-idle-2: #4a5568;
+    --text-highlight: #cbd5e1;
+    /* Icy grey/blue board */
+    --board-light: #dde2e8; --board-dark: #6f7f94;
+  }
   * {
     margin: 0;
     padding: 0;
