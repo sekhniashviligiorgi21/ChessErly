@@ -1,9 +1,12 @@
 <script setup>
-  import { ref, computed } from 'vue' 
+  import { ref, computed, onMounted } from 'vue' // Added onMounted
+  import { useRoute, useRouter } from 'vue-router' // Added useRoute and useRouter
   import { auth } from '../firebase'
   import { onAuthStateChanged, signOut } from 'firebase/auth'
 
   const currentUser = ref(null)
+  const router = useRouter() // Initialize the router instance
+  const route = useRoute()   // Grab the current route object
 
   onMounted(() => {
     onAuthStateChanged(auth, (user) => {
@@ -18,7 +21,6 @@
   function showAuthModal(type) {
     router.push({ path: '/Review', query: { auth: type } })
   }
-  const route = useRoute()
 
   const activeColor = "var(--title-btn-active-1), var(--title-btn-active-2)"
   const idleColor = "var(--title-btn-idle-1), var(--title-btn-idle-2)"
