@@ -1,26 +1,8 @@
 <script setup>
-  import { ref, computed, watch, onMounted } from 'vue'
+  import { ref, computed, watch } from 'vue'
   import Title from '../assets/Title.vue'
   import { Chess } from 'chess.js'
   import { useRouter } from 'vue-router'
-  import { auth, db } from '../firebase'
-  import { 
-    onAuthStateChanged, 
-    signInWithEmailAndPassword, 
-    createUserWithEmailAndPassword, 
-    signOut 
-  } from 'firebase/auth'
-  import { 
-    collection, 
-    addDoc, 
-    query, 
-    where, 
-    getDocs, 
-    serverTimestamp,
-    deleteDoc,
-    doc,
-    orderBy
-  } from 'firebase/firestore'
 
   const router = useRouter()
 
@@ -46,108 +28,11 @@
   const importSite = ref('chess.com')
   const importMode = ref('last') // 'last' | 'range'
 
-  // --- Auth State ---
-  const currentUser = ref(null)
-  const authEmail = ref('')
-  const authPassword = ref('')
-  const isRegistering = ref(false)
-  const authError = ref(null)
-
-  // --- Saved Games State ---
-  const savedGames = ref([])
-
-  onMounted(() => {
-    onAuthStateChanged(auth, (user) => {
-      currentUser.value = user
-      if (user) {
-        fetchSavedGames()
-      } else {
-        savedGames.value = []
-      }
-    })
-  })
-
-  async function handleAuth() {
-    authError.value = null
-    try {
-      if (isRegistering.value) {
-        await createUserWithEmailAndPassword(auth.value || auth, authEmail.value, authPassword.value)
-      } else {
-        await signInWithEmailAndPassword(auth.value || auth, authEmail.value, authPassword.value)
-      }
-      authEmail.value = ''
-      authPassword.value = ''
-    } catch (e) {
-      authError.value = e.message
-    }
-  }
-
-  async function handleLogout() {
-    await signOut(auth)
-  }
-
-  // Automatically save games
-  watch(selectedGame, (newGame) => {
-    if (newGame && currentUser.value) {
-      saveGameToLibrary(newGame)
-    }
-  })
-
-  async function saveGameToLibrary(game) {
-    try {
-      // Check if already saved
-      const q = query(
-        collection(db, 'games'), 
-        where('userId', '==', currentUser.value.uid),
-        where('pgn', '==', game.pgn)
-      )
-      const querySnapshot = await getDocs(q)
-      if (querySnapshot.empty) {
-        const gameData = {
-          userId: currentUser.value.uid,
-          pgn: game.pgn,
-          white: game.white,
-          black: game.black,
-          time_class: game.time_class,
-          createdAt: serverTimestamp()
-        }
-        await addDoc(collection(db, 'games'), gameData)
-      }
-    } catch (e) {
-      console.error('Failed to auto-save game:', e)
-    }
-  }
-
-  async function fetchSavedGames() {
-    if (!currentUser.value) return
-    const q = query(
-      collection(db, 'games'), 
-      where('userId', '==', currentUser.value.uid),
-      orderBy('createdAt', 'desc')
-    )
-    const querySnapshot = await getDocs(q)
-    savedGames.value = querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }))
-  }
-
-  async function deleteSavedGame(gameId, event) {
-    event.stopPropagation()
-    if (!confirm('Delete this game?')) return
-    try {
-      await deleteDoc(doc(db, 'games', gameId))
-      savedGames.value = savedGames.value.filter(g => g.id !== gameId)
-    } catch (e) {
-      console.error(e)
-    }
-  }
-
   // --- PGN / FEN import state ---
   const pgnText = ref('')
   const fenText = ref('')
 
-  const isPasteSource = computed(() => importSite.value === 'pgn' || importSite.value === 'fen' || importSite.value === 'library')
+  const isPasteSource = computed(() => importSite.value === 'pgn' || importSite.value === 'fen')
 
   function normalizeLichessLine(line) {
     const lGame = JSON.parse(line)
@@ -432,56 +317,6 @@
             :class="{ active: importSite === 'fen' }"
             @click="importSite = 'fen'"
           >FEN</button>
-          <button
-            class="site-btn"
-            :class="{ active: importSite === 'library' }"
-            @click="importSite = 'library'"
-          >My Library</button>
-        </div>
-
-        <!-- Auth Section -->
-        <div v-if="importSite === 'library' && !currentUser" class="auth-container">
-          <h2 class="auth-title">{{ isRegistering ? 'Create Account' : 'Sign In' }}</h2>
-          <p class="auth-desc">Sign in to save and access your games from any device.</p>
-          <div class="auth-form">
-            <input v-model="authEmail" type="email" placeholder="Email" class="input" />
-            <input v-model="authPassword" type="password" placeholder="Password" class="input" />
-            <button class="import-btn" @click="handleAuth">
-              {{ isRegistering ? 'Register' : 'Login' }}
-            </button>
-            <p v-if="authError" class="error">{{ authError }}</p>
-            <button class="text-btn" @click="isRegistering = !isRegistering">
-              {{ isRegistering ? 'Already have an account? Login' : 'Need an account? Register' }}
-            </button>
-          </div>
-        </div>
-
-        <div v-if="importSite === 'library' && currentUser" class="library-container">
-          <div class="library-header">
-            <span>Logged in as {{ currentUser.email }}</span>
-            <button class="logout-btn" @click="handleLogout">Logout</button>
-          </div>
-
-          <div v-if="savedGames.length === 0" class="empty-library">
-            Your library is empty. Import a game and click "Save to Library".
-          </div>
-          
-          <div v-else class="games-list">
-            <div 
-              v-for="game in savedGames" 
-              :key="game.id" 
-              class="game-row" 
-              :class="{ selected: selectedGame && selectedGame.id === game.id }" 
-              @click="selectGame(game)"
-            >
-              <span class="color-dot" :class="formatResult(game).myColor.toLowerCase()"></span>
-              <span class="opponent">vs {{ formatResult(game).opponent }}</span>
-              <span class="rating">{{ formatResult(game).myRating }} vs {{ formatResult(game).oppRating }}</span>
-              <span class="result" :class="formatResult(game).result === '1-0' ? 'win' : (formatResult(game).result === '0-1' ? 'loss' : 'draw')">{{ formatResult(game).result }}</span>
-              <span class="time-class">{{ game.time_class }}</span>
-              <button class="delete-btn" @click="deleteSavedGame(game.id, $event)">×</button>
-            </div>
-          </div>
         </div>
 
         <div class="mode-toggle" v-if="!isPasteSource">
@@ -598,28 +433,42 @@
 
   .page-layout {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    padding: 0;
+    padding: clamp(0.5rem, 3vw, 1rem);
     display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 0;
-    min-height: 100vh;
-    max-width: none;
-    margin: 0;
-  }
-
-  .content-area {
-    padding: 2rem;
-    display: flex;
-    justify-content: center;
-    width: 100%;
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+    justify-self: center;
+    max-width: 1200px;
+    margin: 0 auto;
     box-sizing: border-box;
   }
 
+  @media (min-width: 768px) {
+    .page-layout {
+      grid-template-columns: auto 1fr;
+      gap: 1.5rem;
+    }
+  }
+
+  .content-area {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+    min-width: 0;
+  }
+
   .import-card {
-    border-radius: 0;
-    background: transparent;
-    box-shadow: none;
-    border: none;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: clamp(1.25rem, 3vw, 1.75rem);
+    width: 100%;
+    max-width: 30rem;
+    box-sizing: border-box;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 18px;
+    background: linear-gradient(145deg, var(--panel-1), var(--panel-2));
+    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.1);
   }
 
   .card-header { text-align: center; }
@@ -671,6 +520,241 @@
   }
 
   .controls {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    align-items: flex-end;
+  }
+
+  .paste-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .textarea {
+    resize: vertical;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.82rem;
+    line-height: 1.4;
+  }
+
+  .textarea-fen {
+    resize: none;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    flex: 1 1 10rem;
+    min-width: 0;
+  }
+
+  .field-small { flex: 1 1 5rem; }
+
+  .field-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: rgba(244, 240, 227, 0.65);
+  }
+
+  .input {
+    padding: 0.55rem 0.7rem;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(0, 0, 0, 0.25);
+    color: #f4f0e3;
+    font-size: 0.9rem;
+    box-sizing: border-box;
+    width: 100%;
+  }
+
+  .input:focus {
+    outline: none;
+    border-color: var(--text-highlight);
+    box-shadow: 0 0 0 2px rgba(217, 179, 130, 0.2);
+  }
+
+  .import-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1.1rem;
+    border-radius: 8px;
+    background: var(--btn-active);
+    color: #f4f0e3;
+    border: none;
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background 0.2s ease;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+
+  .import-btn:hover:not(:disabled) { background: var(--btn-idle); }
+  .import-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  .spinner {
+    width: 0.85rem;
+    height: 0.85rem;
+    border-radius: 50%;
+    border: 2px solid rgba(244, 240, 227, 0.35);
+    border-top-color: #f4f0e3;
+    animation: spin 0.7s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .error {
+    color: #ffb0a8;
+    background: rgba(255, 60, 60, 0.12);
+    border: 1px solid rgba(255, 100, 90, 0.3);
+    border-radius: 8px;
+    padding: 0.5rem 0.7rem;
+    font-size: 0.85rem;
+  }
+
+  .games-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    max-height: 300px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(194, 197, 170, 0.4) rgba(0, 0, 0, 0.2);
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .game-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+    color: #f4f0e3;
+  }
+
+  .game-row:hover { background: rgba(0, 0, 0, 0.3); }
+
+  .game-row.selected {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: var(--text-highlight);
+  }
+
+  .color-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25);
+  }
+
+  .color-dot.white { background: #f4f0e3; }
+  .color-dot.black { background: #1a1a1a; }
+
+  .opponent {
+    flex: 1;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .rating {
+    font-family: "JetBrains Mono", monospace;
+    color: rgba(244, 240, 227, 0.6);
+    font-size: 0.8rem;
+    flex-shrink: 0;
+  }
+
+  .time-class {
+    color: rgba(244, 240, 227, 0.55);
+    font-size: 0.78rem;
+    text-transform: capitalize;
+    flex-shrink: 0;
+  }
+
+  .result {
+    font-weight: 700;
+    font-size: 0.85rem;
+    flex-shrink: 0;
+  }
+
+  /* Win/loss/draw keep dedicated semantic colors (not theme-tinted), softened
+     from the previous bright green/red so they don't clash with muted themes. */
+  .result.win { color: #8fc06a; }
+  .result.loss { color: #d9736a; }
+  .result.draw { color: #d9b36a; }
+
+  .selection-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.7rem 0.9rem;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 10px;
+    border: 1px solid var(--text-highlight);
+  }
+
+  .selection-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+  }
+
+  .selected-msg {
+    color: var(--text-highlight);
+    font-weight: 700;
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .selection-players {
+    color: #f4f0e3;
+    font-size: 0.82rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .analyse-btn {
+    padding: 0.5rem 1.1rem;
+    border-radius: 8px;
+    font-weight: 700;
+    color: #f4f0e3;
+    background: var(--btn-active);
+    border: none;
+    cursor: pointer;
+    transition: background 0.2s ease;
+    flex-shrink: 0;
+  }
+
+  .analyse-btn:hover { background: var(--btn-idle); }
+
+  .empty {
+    color: rgba(244, 240, 227, 0.6);
+    text-align: center;
+    padding: 0.7rem;
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 8px;
+    font-size: 0.85rem;
+  }
+<style scoped>{
     display: flex;
     gap: 0.6rem;
     flex-wrap: wrap;
