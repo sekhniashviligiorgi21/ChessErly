@@ -52,18 +52,31 @@
     savedGames.value = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
   }
 
+    // A simple hash function to bypass Firestore's query size limit on long PGN strings
+  function generatePgnHash(pgn) {
+    let hash = 0
+    for (let i = 0; i < pgn.length; i++) {
+      const char = pgn.charCodeAt(i)
+      hash = (hash << 5) - hash + char
+      hash &= hash // Convert to 32bit integer
+    }
+    return String(hash)
+  }
+
   async function autoSaveGame() {
     if (!currentUser.value || !selectedGame.value) return
     try {
       const gamesRef = collection(db, `users/${currentUser.value.uid}/games`)
+      const pgnHash = generatePgnHash(selectedGame.value.pgn)
       
-      // Dedupe check
-      const dupQ = query(gamesRef, where('pgn', '==', selectedGame.value.pgn))
+      // Dedupe check using the short hash instead of the full PGN
+      const dupQ = query(gamesRef, where('pgnHash', '==', pgnHash))
       const dupSnap = await getDocs(dupQ)
       if (!dupSnap.empty) return
 
       await addDoc(gamesRef, {
         pgn: selectedGame.value.pgn,
+        pgnHash: pgnHash, // Save the hash for future dedupe checks
         white: selectedGame.value.white,
         black: selectedGame.value.black,
         time_class: selectedGame.value.time_class,
@@ -72,6 +85,8 @@
       fetchSavedGames()
     } catch (e) {
       console.error('Auto-save failed:', e)
+      saveStatus.value = 'Failed to save game.'
+      setTimeout(() => saveStatus.value = '', 2500)
     }
   }
 
