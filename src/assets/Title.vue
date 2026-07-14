@@ -1,8 +1,23 @@
 <script setup>
   import { ref, computed } from 'vue' 
-  import { useRouter, useRoute } from 'vue-router'
+  import { auth } from '../firebase'
+  import { onAuthStateChanged, signOut } from 'firebase/auth'
 
-  const router = useRouter()
+  const currentUser = ref(null)
+
+  onMounted(() => {
+    onAuthStateChanged(auth, (user) => {
+      currentUser.value = user
+    })
+  })
+
+  async function handleLogout() {
+    await signOut(auth)
+  }
+
+  function showAuthModal(type) {
+    router.push({ path: '/Review', query: { auth: type } })
+  }
   const route = useRoute()
 
   const activeColor = "var(--title-btn-active-1), var(--title-btn-active-2)"
@@ -36,6 +51,17 @@
 <template>
   <div class="title-container">
     <h1 class="title">♔ CHESSERLY</h1>
+
+    <div class="auth-menu">
+      <template v-if="!currentUser">
+        <button class="btn" @click="showAuthModal('login')">Login</button>
+        <button class="btn" @click="showAuthModal('register')">Sign Up</button>
+      </template>
+      <template v-else>
+        <span class="user-email">{{ currentUser.email }}</span>
+        <button class="btn" @click="handleLogout">Logout</button>
+      </template>
+    </div>
 
     <button
       class="btn"

@@ -52,6 +52,7 @@
   const authPassword = ref('')
   const isRegistering = ref(false)
   const authError = ref(null)
+  const showGlobalAuthModal = ref(false)
 
   // --- Saved Games State ---
   const savedGames = ref([])
@@ -77,6 +78,7 @@
       }
       authEmail.value = ''
       authPassword.value = ''
+      showGlobalAuthModal.value = false
     } catch (e) {
       authError.value = e.message
     }
@@ -86,41 +88,61 @@
     await signOut(auth)
   }
 
-  async function saveCurrentGame() {
-    if (!currentUser.value || !selectedGame.value) return
-    loading.value = true
+  // Auto-save game helper
+  async function saveGameToLibrary(game) {
+    if (!currentUser.value || !game) return
     try {
-      const gameData = {
-        userId: currentUser.value.uid,
-        pgn: selectedGame.value.pgn,
-        white: selectedGame.value.white,
-        black: selectedGame.value.black,
-        time_class: selectedGame.value.time_class,
-        createdAt: serverTimestamp()
+      const gamePgn = game.pgn || ''
+      const q = query(
+        collection(db, 'games'), 
+        where('userId', '==', currentUser.value.uid),
+        where('pgn', '==', gamePgn)
+      )
+      const querySnapshot = await getDocs(q)
+      
+      if (querySnapshot.empty) {
+        // Explicitly serialize objects to prevent proxy-level Firestore insertion failures
+        const gameData = {
+          userId: currentUser.value.uid,
+          pgn: gamePgn,
+          white: {
+            username: game.white?.username || 'White',
+            rating: Number(game.white?.rating) || 0,
+            result: game.white?.result || 'unknown'
+          },
+          black: {
+            username: game.black?.username || 'Black',
+            rating: Number(game.black?.rating) || 0,
+            result: game.black?.result || 'unknown'
+          },
+          time_class: game.time_class || 'unknown',
+          createdAt: serverTimestamp()
+        }
+        await addDoc(collection(db, 'games'), gameData)
+        await fetchSavedGames()
       }
-      await addDoc(collection(db, 'games'), gameData)
-      alert('Game saved to your library!')
-      fetchSavedGames()
     } catch (e) {
-      console.error(e)
-      alert('Failed to save game.')
-    } finally {
-      loading.value = false
+      console.error('Failed to auto-save game:', e)
+      error.value = "Couldn't save the game to the library."
     }
   }
 
   async function fetchSavedGames() {
     if (!currentUser.value) return
-    const q = query(
-      collection(db, 'games'), 
-      where('userId', '==', currentUser.value.uid),
-      orderBy('createdAt', 'desc')
-    )
-    const querySnapshot = await getDocs(q)
-    savedGames.value = querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }))
+    try {
+      const q = query(
+        collection(db, 'games'), 
+        where('userId', '==', currentUser.value.uid),
+        orderBy('createdAt', 'desc')
+      )
+      const querySnapshot = await getDocs(q)
+      savedGames.value = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }))
+    } catch (e) {
+      console.error(e)
+    }
   }
 
   async function deleteSavedGame(gameId, event) {
@@ -214,8 +236,6 @@
     return [normalizeLichessLine(text.trim().split('\n')[0])]
   }
 
-  // Build a "game" object out of pasted PGN text, matching the shape
-  // selectGame()/analyseGame() expect from Chess.com/Lichess imports.
   function buildGameFromPgn(pgn) {
     const c = new Chess()
     try {
@@ -272,9 +292,6 @@
       if (importSite.value === 'fen') {
         if (!fenText.value.trim()) throw new Error('Paste a FEN first.')
         const fen = validateFen(fenText.value.trim())
-        // FEN imports skip the game list / selectGame flow entirely and
-        // go straight to the analysis page with the position, since
-        // there's no move history to review.
         router.push({ path: '/', query: { fen } })
         loading.value = false
         return
@@ -298,7 +315,6 @@
       if (games.value.length === 0) {
         error.value = 'No games found for that search.'
       } else if (importMode.value === 'last') {
-        // Only one candidate in "last game" mode — select it straight away
         selectGame(games.value[0])
       }
     } catch (e) {
@@ -318,7 +334,6 @@
     
     const tempChess = new Chess()
     moveslist.value = gameUci.value.map(uci => {
-      // Must pass object to modern chess.js to prevent crashes
       const m = tempChess.move({ 
         from: uci.substring(0, 2), 
         to: uci.substring(2, 4), 
@@ -328,21 +343,7 @@
     })
   }
 
-  function replayMoves() {
-    chess.reset()
-    const tempChess = new Chess()
-    moveslist.value = reviewMoves.value.map(uci => {
-      // Must pass object to modern chess.js to prevent crashes
-      const m = tempChess.move({ 
-        from: uci.substring(0, 2), 
-        to: uci.substring(2, 4), 
-        promotion: uci[4] 
-      })
-      return m ? m.san : uci
-    })
-  }
-
-  function convertPgnToUci(pgn) {
+  convertPgnToUci = (pgn) => {
     if (!pgn) return []
     const c = new Chess()
     c.loadPgn(pgn)
@@ -354,29 +355,35 @@
   }
 
   function formatResult(game) {
-    const isWhite = game.white.username.toLowerCase() === username.value.toLowerCase()
+    const userSearch = username.value.toLowerCase()
+    const isWhite = game.white?.username?.toLowerCase() === userSearch
     const me = isWhite ? game.white : game.black
     const opponent = isWhite ? game.black : game.white
     
     let result = '½-½'
-    if (me.result === 'win') {
+    if (me?.result === 'win') {
       result = '1-0'
-    } else if (['resigned', 'checkmated', 'abandoned', 'lose'].includes(me.result)) {
+    } else if (['resigned', 'checkmated', 'abandoned', 'lose'].includes(me?.result)) {
       result = '0-1'
     }
     
     return {
-      opponent: opponent.username,
+      opponent: opponent?.username || 'Unknown',
       result,
       myColor: isWhite ? 'White' : 'Black',
-      myRating: me.rating,
-      oppRating: opponent.rating
+      myRating: me?.rating || 0,
+      oppRating: opponent?.rating || 0
     }
   }
 
-  function analyseGame(){
+  async function analyseGame(){
     if (!selectedGame.value || gameUci.value.length === 0) return
   
+    // Automated Library Syncing happens here
+    if (currentUser.value) {
+      await saveGameToLibrary(selectedGame.value)
+    }
+
     const moveString = gameUci.value.join('-')
   
     router.push({ 
@@ -394,6 +401,17 @@
 
 <template>
   <div class="page-layout">
+    <!-- Global Auth Controls Grid Area Slot -->
+    <div class="global-header-actions">
+      <div v-if="currentUser" class="global-user-profile">
+        <span class="user-tag">👤 {{ currentUser.email }}</span>
+        <button class="header-auth-btn signout" @click="handleLogout">Logout</button>
+      </div>
+      <div v-else class="global-user-profile">
+        <button class="header-auth-btn login" @click="showGlobalAuthModal = true">Sign In / Register</button>
+      </div>
+    </div>
+
     <Title/>
     <div class="content-area">
       <div class="import-card">
@@ -430,10 +448,10 @@
           >My Library</button>
         </div>
 
-        <!-- Auth Section -->
+        <!-- Library Container Routing View -->
         <div v-if="importSite === 'library' && !currentUser" class="auth-container">
-          <h2 class="auth-title">{{ isRegistering ? 'Create Account' : 'Sign In' }}</h2>
-          <p class="auth-desc">Sign in to save and access your games from any device.</p>
+          <h2 class="auth-title">Account Connection Required</h2>
+          <p class="auth-desc">Sign in globally or use the form below to load personal library records.</p>
           <div class="auth-form">
             <input v-model="authEmail" type="email" placeholder="Email" class="input" />
             <input v-model="authPassword" type="password" placeholder="Password" class="input" />
@@ -450,11 +468,10 @@
         <div v-if="importSite === 'library' && currentUser" class="library-container">
           <div class="library-header">
             <span>Logged in as {{ currentUser.email }}</span>
-            <button class="logout-btn" @click="handleLogout">Logout</button>
           </div>
 
           <div v-if="savedGames.length === 0" class="empty-library">
-            Your library is empty. Import a game and click "Save to Library".
+            Your library is empty. Games automatically transfer here when sent for analysis.
           </div>
           
           <div v-else class="games-list">
@@ -575,13 +592,24 @@
             </span>
           </div>
           <button class="analyse-btn" @click="analyseGame()">Analyse →</button>
-          <button v-if="currentUser && importSite !== 'library'" class="save-btn" @click="saveCurrentGame" title="Save to Library">
-            💾
-          </button>
         </div>
         <div v-else-if="games.length && !loading && importSite !== 'fen'" class="empty">
           No game selected yet.
         </div>
+      </div>
+    </div>
+
+    <!-- Global Auth Backdrop Modal Box -->
+    <div v-if="showGlobalAuthModal" class="global-modal-overlay" @click.self="showGlobalAuthModal = false">
+      <div class="global-modal-box">
+        <h3>{{ isRegistering ? 'Create New Account' : 'Sign In To Account' }}</h3>
+        <input v-model="authEmail" type="email" placeholder="Email Address" class="input" />
+        <input v-model="authPassword" type="password" placeholder="Password" class="input" />
+        <button class="import-btn w-full" @click="handleAuth">Proceed</button>
+        <p v-if="authError" class="error">{{ authError }}</p>
+        <button class="text-btn transition-btn" @click="isRegistering = !isRegistering">
+          {{ isRegistering ? 'Switch to Sign In' : 'Create an Account Instead' }}
+        </button>
       </div>
     </div>
   </div>
@@ -592,42 +620,105 @@
 
   .page-layout {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    padding: clamp(0.5rem, 3vw, 1rem);
+    padding: 0;
     display: grid;
-    grid-template-columns: 1fr;
-    gap: 1.25rem;
-    justify-self: center;
-    max-width: 1200px;
-    margin: 0 auto;
-    box-sizing: border-box;
+    grid-template-columns: auto 1fr;
+    gap: 0;
+    min-height: 100vh;
+    max-width: none;
+    margin: 0;
+    position: relative;
   }
 
-  @media (min-width: 768px) {
-    .page-layout {
-      grid-template-columns: auto 1fr;
-      gap: 1.5rem;
-    }
+  .global-header-actions {
+    position: absolute;
+    top: 1rem;
+    right: 1.5rem;
+    z-index: 100;
   }
 
-  .content-area {
+  .global-user-profile {
     display: flex;
-    justify-content: center;
-    width: 100%;
-    min-width: 0;
+    align-items: center;
+    gap: 0.75rem;
+    background: rgba(0, 0, 0, 0.4);
+    padding: 0.4rem 0.8rem;
+    border-radius: 30px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
   }
 
-  .import-card {
+  .user-tag {
+    color: #f4f0e3;
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+
+  .header-auth-btn {
+    background: var(--btn-active);
+    color: #f4f0e3;
+    border: none;
+    padding: 0.3rem 0.8rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: transform 0.2s;
+  }
+  .header-auth-btn:hover {
+    transform: scale(1.03);
+  }
+  .header-auth-btn.signout {
+    background: rgba(255, 80, 80, 0.2);
+    color: #ffb0a8;
+    border: 1px solid rgba(255, 80, 80, 0.4);
+  }
+
+  .global-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+  }
+
+  .global-modal-box {
+    background: #1e1e24;
+    padding: 2rem;
+    border-radius: 16px;
+    width: 320px;
     display: flex;
     flex-direction: column;
     gap: 1rem;
-    padding: clamp(1.25rem, 3vw, 1.75rem);
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+
+  .global-modal-box h3 {
+    margin: 0;
+    color: #f5f5dc;
+    font-family: serif;
+    font-size: 1.3rem;
+    text-align: center;
+  }
+
+  .w-full { width: 100%; }
+  .transition-btn { margin-top: 0.5rem; text-align: center; }
+
+  .content-area {
+    padding: 2rem;
+    display: flex;
+    justify-content: center;
     width: 100%;
-    max-width: 30rem;
     box-sizing: border-box;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 18px;
-    background: linear-gradient(145deg, var(--panel-1), var(--panel-2));
-    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  }
+
+  .import-card {
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    border: none;
   }
 
   .card-header { text-align: center; }
@@ -698,9 +789,7 @@
     line-height: 1.4;
   }
 
-  .textarea-fen {
-    resize: none;
-  }
+  .textarea-fen { resize: none; }
 
   .field {
     display: flex;
@@ -850,8 +939,6 @@
     flex-shrink: 0;
   }
 
-  /* Win/loss/draw keep dedicated semantic colors (not theme-tinted), softened
-     from the previous bright green/red so they don't clash with muted themes. */
   .result.win { color: #8fc06a; }
   .result.loss { color: #d9736a; }
   .result.draw { color: #d9b36a; }
@@ -905,7 +992,6 @@
 
   .analyse-btn:hover { background: var(--btn-idle); }
 
-  /* Auth & Library Styles */
   .auth-container {
     display: flex;
     flex-direction: column;
@@ -928,11 +1014,7 @@
     margin-bottom: 0.5rem;
   }
 
-  .auth-form {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
+  .auth-form { display: flex; flex-direction: column; gap: 0.75rem; }
 
   .text-btn {
     background: none;
@@ -946,11 +1028,7 @@
 
   .text-btn:hover { opacity: 1; }
 
-  .library-container {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
+  .library-container { display: flex; flex-direction: column; gap: 1rem; }
 
   .library-header {
     display: flex;
@@ -962,18 +1040,6 @@
     background: rgba(255, 255, 255, 0.05);
     border-radius: 8px;
   }
-
-  .logout-btn {
-    background: rgba(255, 100, 100, 0.15);
-    border: 1px solid rgba(255, 100, 100, 0.3);
-    color: #ffb0a8;
-    padding: 0.2rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    cursor: pointer;
-  }
-
-  .logout-btn:hover { background: rgba(255, 100, 100, 0.25); }
 
   .empty-library {
     text-align: center;
@@ -996,21 +1062,6 @@
   }
 
   .delete-btn:hover { color: #ffb0a8; }
-
-  .save-btn {
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 8px;
-    padding: 0.5rem;
-    font-size: 1.1rem;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .save-btn:hover {
-    background: rgba(255, 255, 255, 0.2);
-    transform: scale(1.05);
-  }
 
   .empty {
     color: rgba(244, 240, 227, 0.6);
