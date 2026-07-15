@@ -60,7 +60,7 @@
   // --- Computed Statistics ---
   const totalGames = computed(() => insights.value.length)
   const totalMoves = computed(() => insights.value.reduce((sum, game) => sum + (game.totalMoves || 0), 0))
-  
+
   const overallAccuracy = computed(() => {
     const gamesWithAcc = insights.value.filter(g => g.overallAccuracy !== null)
     if (gamesWithAcc.length === 0) return null
@@ -69,6 +69,47 @@
   })
 
   const overallMeta = computed(() => getAccuracyMeta(overallAccuracy.value ? parseFloat(overallAccuracy.value) : null))
+
+  // Ring geometry for the hero accuracy gauge
+  const RING_RADIUS = 54
+  const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
+  const ringOffset = computed(() => {
+    const pct = overallAccuracy.value ? parseFloat(overallAccuracy.value) : 0
+    return RING_CIRCUMFERENCE - (pct / 100) * RING_CIRCUMFERENCE
+  })
+
+  // Trend: compare most recent slice vs. the rest (insights are ordered desc by createdAt already)
+  const RECENT_WINDOW = 5
+  const trend = computed(() => {
+    const withAcc = insights.value.filter(g => g.overallAccuracy !== null)
+    if (withAcc.length < 4) return null // not enough data to mean anything
+
+    const recent = withAcc.slice(0, RECENT_WINDOW)
+    const older = withAcc.slice(RECENT_WINDOW)
+    if (older.length === 0) return null
+
+    const avg = (arr) => arr.reduce((a, g) => a + g.overallAccuracy, 0) / arr.length
+    const recentAvg = avg(recent)
+    const olderAvg = avg(older)
+    const delta = recentAvg - olderAvg
+
+    return {
+      delta: delta.toFixed(1),
+      direction: delta > 0.5 ? 'up' : delta < -0.5 ? 'down' : 'flat'
+    }
+  })
+
+  // Recent form strip — last N games as small colored blocks
+  const RECENT_FORM_COUNT = 8
+  const recentForm = computed(() => {
+    return insights.value.slice(0, RECENT_FORM_COUNT).map(g => ({
+      accuracy: g.overallAccuracy,
+      meta: getAccuracyMeta(g.overallAccuracy),
+      opening: g.opening && g.opening !== "Unknown Opening" ? g.opening : "Unrecognized Opening",
+      white: g.white,
+      black: g.black
+    })).reverse() // oldest -> newest, left to right
+  })
 
   const phaseAccuracy = computed(() => {
     const phases = { opening: [], middlegame: [], endgame: [] }
@@ -79,17 +120,17 @@
         if (g.phaseAccuracy.endgame !== null) phases.endgame.push(g.phaseAccuracy.endgame)
       }
     })
-    
+
     const calc = (arr) => arr.length ? (arr.reduce((a,b) => a+b, 0) / arr.length).toFixed(1) : null
-    
+
     let oAcc = calc(phases.opening)
     let mAcc = calc(phases.middlegame)
     let eAcc = calc(phases.endgame)
 
     return {
-      opening: { val: oAcc, meta: getAccuracyMeta(oAcc ? parseFloat(oAcc) : null) },
-      middlegame: { val: mAcc, meta: getAccuracyMeta(mAcc ? parseFloat(mAcc) : null) },
-      endgame: { val: eAcc, meta: getAccuracyMeta(eAcc ? parseFloat(eAcc) : null) }
+      opening: { val: oAcc, meta: getAccuracyMeta(oAcc ? parseFloat(oAcc) : null), n: phases.opening.length },
+      middlegame: { val: mAcc, meta: getAccuracyMeta(mAcc ? parseFloat(mAcc) : null), n: phases.middlegame.length },
+      endgame: { val: eAcc, meta: getAccuracyMeta(eAcc ? parseFloat(eAcc) : null), n: phases.endgame.length }
     }
   })
 
@@ -105,6 +146,23 @@
     return totals
   })
 
+  const moveCountsTotal = computed(() => Object.values(moveCounts.value).reduce((a, b) => a + b, 0))
+
+  const classificationOrder = ['brilliant', 'great', 'best', 'book', 'excellent', 'good', 'inaccuracy', 'mistake', 'blunder']
+
+  const moveCountsBarSegments = computed(() => {
+    const total = moveCountsTotal.value
+    if (!total) return []
+    return classificationOrder
+      .map(key => ({
+        key,
+        count: moveCounts.value[key],
+        percent: (moveCounts.value[key] / total) * 100,
+        meta: classificationMeta[key]
+      }))
+      .filter(seg => seg.count > 0)
+  })
+
   // Top 5 Openings (Fixed Unknown Opening)
   const topOpenings = computed(() => {
     const counts = {}
@@ -115,14 +173,28 @@
       counts[name].count++
       if (g.overallAccuracy !== null) counts[name].accuracy.push(g.overallAccuracy)
     })
-    
+
+    const overallAvg = overallAccuracy.value ? parseFloat(overallAccuracy.value) : null
+
     return Object.values(counts)
-      .map(o => ({
-        name: o.name,
-        count: o.count,
-        avgAccuracy: o.accuracy.length ? (o.accuracy.reduce((a,b) => a+b, 0) / o.accuracy.length).toFixed(1) : null,
-        meta: o.accuracy.length ? getAccuracyMeta(parseFloat((o.accuracy.reduce((a,b) => a+b, 0) / o.accuracy.length).toFixed(1))) : getAccuracyMeta(null)
-      }))
+      .map(o => {
+        const avgAccuracy = o.accuracy.length ? (o.accuracy.reduce((a,b) => a+b, 0) / o.accuracy.length) : null
+        let comparison = null
+        if (avgAccuracy !== null && overallAvg !== null) {
+          const diff = avgAccuracy - overallAvg
+          comparison = {
+            diff: Math.abs(diff).toFixed(1),
+            direction: diff > 1 ? 'up' : diff < -1 ? 'down' : 'flat'
+          }
+        }
+        return {
+          name: o.name,
+          count: o.count,
+          avgAccuracy: avgAccuracy !== null ? avgAccuracy.toFixed(1) : null,
+          meta: avgAccuracy !== null ? getAccuracyMeta(parseFloat(avgAccuracy.toFixed(1))) : getAccuracyMeta(null),
+          comparison
+        }
+      })
       .sort((a, b) => b.count - a.count)
       .slice(0, 5)
   })
@@ -155,7 +227,11 @@
         </div>
 
         <div v-if="loading" class="empty-state">
-          <div class="spinner"></div>
+          <div class="loading-spinner">
+            <div class="spinner-ring"></div>
+            <div class="spinner-ring"></div>
+            <div class="spinner-ring"></div>
+          </div>
           <p>Crunching the numbers...</p>
         </div>
 
@@ -168,20 +244,45 @@
         </div>
 
         <div v-else class="dashboard-layout">
-          <!-- LEFT COLUMN: Tabbed Content -->
-          <div class="main-column">
-            <!-- Tab Navigation -->
-            <div class="tab-nav">
-              <button class="tab-btn" :class="{ active: activeTab === 'overview' }" @click="setTab('overview')">Overview</button>
-              <button class="tab-btn" :class="{ active: activeTab === 'phases' }" @click="setTab('phases')">Phases</button>
-              <button class="tab-btn" :class="{ active: activeTab === 'openings' }" @click="setTab('openings')">Openings</button>
-              <button class="tab-btn" :class="{ active: activeTab === 'moves' }" @click="setTab('moves')">Move Classes</button>
-            </div>
+          <!-- Tab Navigation -->
+          <div class="tab-nav">
+            <button class="tab-btn" :class="{ active: activeTab === 'overview' }" @click="setTab('overview')">Overview</button>
+            <button class="tab-btn" :class="{ active: activeTab === 'phases' }" @click="setTab('phases')">Phases</button>
+            <button class="tab-btn" :class="{ active: activeTab === 'openings' }" @click="setTab('openings')">Openings</button>
+            <button class="tab-btn" :class="{ active: activeTab === 'moves' }" @click="setTab('moves')">Move Classes</button>
+          </div>
 
-            <div class="tab-content-area">
-              <!-- OVERVIEW TAB -->
-              <div v-if="activeTab === 'overview'" class="tab-panel">
-                <div class="stat-row">
+          <div class="tab-content-area">
+            <!-- OVERVIEW TAB -->
+            <div v-if="activeTab === 'overview'" class="tab-panel">
+              <div class="hero-row">
+                <div class="hero-ring-card">
+                  <svg class="ring-svg" viewBox="0 0 140 140">
+                    <circle class="ring-track" cx="70" cy="70" r="54" />
+                    <circle
+                      class="ring-progress"
+                      cx="70" cy="70" r="54"
+                      :style="{
+                        stroke: overallMeta.color,
+                        strokeDasharray: RING_CIRCUMFERENCE,
+                        strokeDashoffset: ringOffset
+                      }"
+                    />
+                  </svg>
+                  <div class="ring-center">
+                    <img v-if="overallMeta.icon" :src="overallMeta.icon" class="ring-icon" />
+                    <span class="ring-value" :style="{ color: overallMeta.color }">{{ overallAccuracy !== null ? overallAccuracy + '%' : '—' }}</span>
+                    <span class="ring-label">Overall Accuracy</span>
+                  </div>
+                  <div v-if="trend" class="trend-pill" :class="trend.direction">
+                    <span v-if="trend.direction === 'up'">▲</span>
+                    <span v-else-if="trend.direction === 'down'">▼</span>
+                    <span v-else>◆</span>
+                    {{ Math.abs(trend.delta) }}% vs. earlier games
+                  </div>
+                </div>
+
+                <div class="hero-stats-col">
                   <div class="stat-box">
                     <span class="stat-label">Games Analyzed</span>
                     <span class="stat-value">{{ totalGames }}</span>
@@ -190,93 +291,98 @@
                     <span class="stat-label">Moves Tracked</span>
                     <span class="stat-value">{{ totalMoves }}</span>
                   </div>
-                  <div class="stat-box highlight" :style="{ borderColor: overallMeta.color, background: overallMeta.color + '10' }">
-                    <span class="stat-label">Overall Accuracy</span>
-                    <div class="stat-icon-row">
-                      <img v-if="overallMeta.icon" :src="overallMeta.icon" class="stat-icon-img" />
-                      <span class="stat-value" :style="{ color: overallMeta.color }">{{ overallAccuracy !== null ? overallAccuracy + '%' : '—' }}</span>
-                    </div>
-                  </div>
-                </div>
-                <div class="quick-glance-phases">
-                  <div class="mini-phase">
-                    <span>Opening</span>
-                    <strong :style="{color: phaseAccuracy.opening.meta.color}">{{ phaseAccuracy.opening.val ? phaseAccuracy.opening.val + '%' : '—' }}</strong>
-                  </div>
-                  <div class="mini-phase">
-                    <span>Middlegame</span>
-                    <strong :style="{color: phaseAccuracy.middlegame.meta.color}">{{ phaseAccuracy.middlegame.val ? phaseAccuracy.middlegame.val + '%' : '—' }}</strong>
-                  </div>
-                  <div class="mini-phase">
-                    <span>Endgame</span>
-                    <strong :style="{color: phaseAccuracy.endgame.meta.color}">{{ phaseAccuracy.endgame.val ? phaseAccuracy.endgame.val + '%' : '—' }}</strong>
-                  </div>
                 </div>
               </div>
 
-              <!-- PHASES TAB -->
-              <div v-if="activeTab === 'phases'" class="tab-panel">
-                <div class="phase-grid">
-                  <div class="phase-box" v-for="(phase, key) in phaseAccuracy" :key="key">
-                    <div class="phase-header">
-                      <span class="phase-name">{{ key.charAt(0).toUpperCase() + key.slice(1) }}</span>
-                      <img v-if="phase.meta.icon" :src="phase.meta.icon" class="phase-icon-img" />
-                    </div>
-                    <div class="phase-bar-container">
-                      <div class="phase-bar" :style="{ width: (phase.val || 0) + '%', background: `linear-gradient(90deg, ${phase.meta.color}aa, ${phase.meta.color})` }"></div>
-                    </div>
+              <div class="quick-glance-phases">
+                <div class="mini-phase">
+                  <span>Opening</span>
+                  <strong :style="{color: phaseAccuracy.opening.meta.color}">{{ phaseAccuracy.opening.val ? phaseAccuracy.opening.val + '%' : '—' }}</strong>
+                </div>
+                <div class="mini-phase">
+                  <span>Middlegame</span>
+                  <strong :style="{color: phaseAccuracy.middlegame.meta.color}">{{ phaseAccuracy.middlegame.val ? phaseAccuracy.middlegame.val + '%' : '—' }}</strong>
+                </div>
+                <div class="mini-phase">
+                  <span>Endgame</span>
+                  <strong :style="{color: phaseAccuracy.endgame.meta.color}">{{ phaseAccuracy.endgame.val ? phaseAccuracy.endgame.val + '%' : '—' }}</strong>
+                </div>
+              </div>
+
+              <div class="recent-form-section" v-if="recentForm.length">
+                <h3 class="section-subtitle">Recent Form</h3>
+                <div class="recent-form-strip">
+                  <div
+                    v-for="(game, i) in recentForm"
+                    :key="i"
+                    class="form-block"
+                    :style="{ background: game.meta.color, opacity: game.accuracy !== null ? 1 : 0.25 }"
+                    :title="`${game.white?.username || game.white} vs ${game.black?.username || game.black} — ${game.accuracy !== null ? game.accuracy.toFixed(1) + '%' : 'N/A'} — ${game.opening}`"
+                  ></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- PHASES TAB -->
+            <div v-if="activeTab === 'phases'" class="tab-panel">
+              <div class="phase-grid">
+                <div class="phase-box" v-for="(phase, key) in phaseAccuracy" :key="key">
+                  <div class="phase-header">
+                    <span class="phase-name">{{ key.charAt(0).toUpperCase() + key.slice(1) }}</span>
+                    <img v-if="phase.meta.icon" :src="phase.meta.icon" class="phase-icon-img" />
+                  </div>
+                  <div class="phase-bar-container">
+                    <div class="phase-bar" :style="{ width: (phase.val || 0) + '%', background: `linear-gradient(90deg, ${phase.meta.color}aa, ${phase.meta.color})` }"></div>
+                  </div>
+                  <div class="phase-footer">
+                    <span class="phase-n">{{ phase.n }} game{{ phase.n === 1 ? '' : 's' }}</span>
                     <span class="phase-val" :style="{ color: phase.meta.color }">{{ phase.val !== null ? phase.val + '%' : '—' }}</span>
                   </div>
                 </div>
               </div>
+            </div>
 
-              <!-- OPENINGS TAB -->
-              <div v-if="activeTab === 'openings'" class="tab-panel">
-                <div class="openings-list">
-                  <div v-for="(opening, i) in topOpenings" :key="i" class="opening-row">
-                    <span class="opening-rank">#{{ i + 1 }}</span>
-                    <span class="opening-name">{{ opening.name }}</span>
-                    <span class="opening-games">{{ opening.count }} games</span>
-                    <div class="opening-acc-container" v-if="opening.avgAccuracy">
-                      <img :src="opening.meta.icon" class="opening-acc-icon" />
-                      <span class="opening-acc" :style="{color: opening.meta.color}">{{ opening.avgAccuracy }}%</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- MOVE CLASSES TAB -->
-              <div v-if="activeTab === 'moves'" class="tab-panel">
-                <div class="move-classes-grid">
-                  <div v-for="(meta, key) in classificationMeta" :key="key" class="move-class-box">
-                    <img :src="meta.icon" class="mc-icon-img" :alt="meta.label" />
-                    <span class="mc-label" :style="{ color: meta.color }">{{ meta.label }}</span>
-                    <span class="mc-count">{{ moveCounts[key] }}</span>
+            <!-- OPENINGS TAB -->
+            <div v-if="activeTab === 'openings'" class="tab-panel">
+              <div class="openings-list">
+                <div v-for="(opening, i) in topOpenings" :key="i" class="opening-row">
+                  <span class="opening-rank">#{{ i + 1 }}</span>
+                  <span class="opening-name">{{ opening.name }}</span>
+                  <span class="opening-games">{{ opening.count }} games</span>
+                  <div class="opening-acc-container" v-if="opening.avgAccuracy">
+                    <img :src="opening.meta.icon" class="opening-acc-icon" />
+                    <span class="opening-acc" :style="{color: opening.meta.color}">{{ opening.avgAccuracy }}%</span>
+                    <span
+                      v-if="opening.comparison && opening.comparison.direction !== 'flat'"
+                      class="opening-comparison"
+                      :class="opening.comparison.direction"
+                    >
+                      {{ opening.comparison.direction === 'up' ? '▲' : '▼' }}{{ opening.comparison.diff }}
+                    </span>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
 
-          <!-- RIGHT COLUMN: Sticky Summary -->
-          <div class="side-column">
-            <div class="sticky-section">
-              <h2 class="section-title">Summary</h2>
-              <div class="summary-card">
-                <div class="summary-item">
-                  <span class="summary-label">Total Games</span>
-                  <span class="summary-value">{{ totalGames }}</span>
+            <!-- MOVE CLASSES TAB -->
+            <div v-if="activeTab === 'moves'" class="tab-panel">
+              <div class="move-bar-container" v-if="moveCountsBarSegments.length">
+                <div class="move-bar">
+                  <div
+                    v-for="seg in moveCountsBarSegments"
+                    :key="seg.key"
+                    class="move-bar-segment"
+                    :style="{ width: seg.percent + '%', background: seg.meta.color }"
+                    :title="`${seg.meta.label}: ${seg.count} (${seg.percent.toFixed(1)}%)`"
+                  ></div>
                 </div>
-                <div class="summary-item">
-                  <span class="summary-label">Total Moves</span>
-                  <span class="summary-value">{{ totalMoves }}</span>
-                </div>
-                <div class="summary-item highlight" :style="{ borderColor: overallMeta.color }">
-                  <span class="summary-label">Overall Acc.</span>
-                  <div class="summary-acc-row">
-                    <img v-if="overallMeta.icon" :src="overallMeta.icon" class="summary-icon" />
-                    <span class="summary-value" :style="{ color: overallMeta.color }">{{ overallAccuracy !== null ? overallAccuracy + '%' : '—' }}</span>
-                  </div>
+              </div>
+              <div class="move-classes-grid">
+                <div v-for="(meta, key) in classificationMeta" :key="key" class="move-class-box">
+                  <img :src="meta.icon" class="mc-icon-img" :alt="meta.label" />
+                  <span class="mc-label" :style="{ color: meta.color }">{{ meta.label }}</span>
+                  <span class="mc-count">{{ moveCounts[key] }}</span>
+                  <span class="mc-percent" v-if="moveCountsTotal">{{ ((moveCounts[key] / moveCountsTotal) * 100).toFixed(1) }}%</span>
                 </div>
               </div>
             </div>
@@ -297,7 +403,7 @@
     grid-template-columns: 1fr;
     gap: 1.25rem;
     justify-self: center;
-    min-width: 100%; 
+    min-width: 100%;
     margin: 0 auto;
     box-sizing: border-box;
   }
@@ -328,9 +434,9 @@
     border-radius: 18px;
     background: linear-gradient(145deg, var(--panel-1), var(--panel-2));
     box-shadow: 0 15px 35px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.1);
-    height: calc(100vh - 2rem); /* Fix height to prevent page scroll */
+    height: calc(100vh - 2rem);
     max-height: 900px;
-    overflow: hidden; /* Let inner columns handle scroll */
+    overflow: hidden;
   }
 
   .card-header { text-align: center; flex-shrink: 0; }
@@ -360,37 +466,43 @@
     text-align: center;
   }
 
-  .spinner {
-    width: 2rem; height: 2rem;
-    border-radius: 50%;
-    border: 3px solid rgba(244, 240, 227, 0.2);
-    border-top-color: var(--text-highlight);
-    animation: spin 0.8s linear infinite;
+  .loading-spinner {
+    position: relative;
+    width: 56px;
+    height: 56px;
   }
-  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .spinner-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 3px solid transparent;
+    border-top-color: var(--text-highlight);
+    animation: spinRing 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+  }
+
+  .spinner-ring:nth-child(2) {
+    inset: 7px;
+    border-top-color: #a8d97a;
+    animation-duration: 1.6s;
+    animation-direction: reverse;
+  }
+
+  .spinner-ring:nth-child(3) {
+    inset: 14px;
+    border-top-color: #f4f0e3;
+    animation-duration: 2s;
+  }
+
+  @keyframes spinRing { to { transform: rotate(360deg); } }
 
   /* Dashboard Layout */
   .dashboard-layout {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 2rem;
-    flex: 1;
-    min-height: 0; /* Crucial for nested scrolling */
-  }
-
-  @media (min-width: 900px) {
-    .dashboard-layout {
-      grid-template-columns: 2fr 1fr;
-      align-items: stretch;
-    }
-  }
-
-  .main-column {
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
+    flex: 1;
     min-height: 0;
-    overflow: hidden;
   }
 
   .tab-nav {
@@ -436,17 +548,107 @@
     flex-direction: column;
     gap: 1.5rem;
     animation: fadeIn 0.3s ease;
+    max-width: 760px;
+    margin: 0 auto;
   }
 
   @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 
-  /* Stats */
-  .stat-row {
+  /* Hero row (Overview) */
+  .hero-row {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 1rem;
+    grid-template-columns: auto 1fr;
+    gap: 1.5rem;
+    align-items: stretch;
   }
 
+  @media (max-width: 560px) {
+    .hero-row { grid-template-columns: 1fr; justify-items: center; }
+  }
+
+  .hero-ring-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    background: rgba(0, 0, 0, 0.22);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 16px;
+    padding: 1.5rem;
+    position: relative;
+  }
+
+  .ring-svg {
+    width: 140px;
+    height: 140px;
+    transform: rotate(-90deg);
+  }
+
+  .ring-track {
+    fill: none;
+    stroke: rgba(0, 0, 0, 0.35);
+    stroke-width: 10;
+  }
+
+  .ring-progress {
+    fill: none;
+    stroke-width: 10;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 0.7s ease, stroke 0.3s ease;
+  }
+
+  .ring-center {
+    position: absolute;
+    top: 1.5rem;
+    left: 0;
+    width: 140px;
+    height: 140px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.15rem;
+  }
+
+  .ring-icon { width: 26px; height: 26px; margin-bottom: 0.1rem; }
+
+  .ring-value {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 1.7rem;
+    font-weight: 700;
+  }
+
+  .ring-label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: rgba(244, 240, 227, 0.55);
+    font-weight: 600;
+  }
+
+  .trend-pill {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 0.3rem 0.7rem;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.25);
+  }
+
+  .trend-pill.up { color: #8fd97a; }
+  .trend-pill.down { color: #ff8a80; }
+  .trend-pill.flat { color: rgba(244, 240, 227, 0.6); }
+
+  .hero-stats-col {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    justify-content: center;
+  }
+
+  /* Stats */
   .stat-box {
     background: rgba(0, 0, 0, 0.2);
     border: 1px solid rgba(255, 255, 255, 0.05);
@@ -457,8 +659,6 @@
     align-items: center;
     gap: 0.5rem;
   }
-
-  .stat-box.highlight { border-color: var(--text-highlight); }
 
   .stat-label {
     font-size: 0.75rem;
@@ -475,22 +675,10 @@
     color: #f5f5dc;
   }
 
-  .stat-icon-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .stat-icon-img {
-    width: 28px;
-    height: 28px;
-  }
-
   .quick-glance-phases {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 1rem;
-    margin-top: 0.5rem;
   }
 
   .mini-phase {
@@ -504,6 +692,38 @@
   }
   .mini-phase span { font-size: 0.75rem; color: rgba(244,240,227,0.6); text-transform: uppercase; }
   .mini-phase strong { font-size: 1.1rem; font-family: "JetBrains Mono", monospace; }
+
+  /* Recent form */
+  .recent-form-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .section-subtitle {
+    font-family: serif;
+    color: #f5f5dc;
+    font-size: 0.95rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin: 0;
+  }
+
+  .recent-form-strip {
+    display: flex;
+    gap: 0.4rem;
+  }
+
+  .form-block {
+    flex: 1;
+    height: 2.2rem;
+    border-radius: 6px;
+    cursor: default;
+    transition: transform 0.15s ease;
+  }
+
+  .form-block:hover { transform: translateY(-3px); }
 
   /* Phases Tab */
   .phase-grid {
@@ -529,7 +749,7 @@
 
   .phase-name { font-size: 1.1rem; font-weight: 600; color: rgba(244, 240, 227, 0.9); text-transform: capitalize; }
   .phase-icon-img { width: 32px; height: 32px; }
-  
+
   .phase-bar-container {
     height: 12px;
     background: rgba(0, 0, 0, 0.4);
@@ -544,11 +764,21 @@
     box-shadow: 0 0 8px rgba(255,255,255,0.1);
   }
 
+  .phase-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+
+  .phase-n {
+    font-size: 0.75rem;
+    color: rgba(244, 240, 227, 0.5);
+  }
+
   .phase-val {
     font-family: "JetBrains Mono", monospace;
     font-size: 1.4rem;
     font-weight: 700;
-    text-align: right;
   }
 
   /* Openings Tab */
@@ -610,7 +840,39 @@
     font-weight: 700;
   }
 
+  .opening-comparison {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.1rem 0.35rem;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.25);
+  }
+
+  .opening-comparison.up { color: #8fd97a; }
+  .opening-comparison.down { color: #ff8a80; }
+
   /* Move Classes Tab */
+  .move-bar-container {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 12px;
+    padding: 1rem;
+  }
+
+  .move-bar {
+    display: flex;
+    width: 100%;
+    height: 1.8rem;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+  }
+
+  .move-bar-segment {
+    height: 100%;
+    transition: width 0.5s ease;
+  }
+
   .move-classes-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -624,82 +886,13 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.35rem;
     transition: transform 0.2s;
   }
   .move-class-box:hover { transform: translateY(-2px); }
 
   .mc-icon-img { width: 36px; height: 36px; }
   .mc-label { font-size: 0.8rem; font-weight: 600; }
-  .mc-count { font-family: "JetBrains Mono", monospace; font-size: 1.5rem; font-weight: 700; color: #f5f5dc; margin-top: 0.25rem; }
-
-  /* Sticky Right Column */
-  .side-column {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .sticky-section {
-    position: sticky;
-    top: 0;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 14px;
-    padding: 1.5rem;
-    height: fit-content;
-  }
-
-  .section-title {
-    font-family: serif;
-    color: #f5f5dc;
-    font-size: 1.2rem;
-    font-weight: 600;
-    margin: 0 0 1rem 0;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  }
-
-  .summary-card {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .summary-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem 0.5rem;
-    border-radius: 8px;
-  }
-  
-  .summary-item.highlight {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.1);
-    padding: 1rem 0.75rem;
-  }
-
-  .summary-label {
-    font-size: 0.85rem;
-    color: rgba(244,240,227,0.7);
-    font-weight: 600;
-  }
-
-  .summary-value {
-    font-family: "JetBrains Mono", monospace;
-    font-size: 1.2rem;
-    font-weight: 700;
-    color: #f5f5dc;
-  }
-
-  .summary-acc-row {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-  }
-
-  .summary-icon {
-    width: 24px;
-    height: 24px;
-  }
+  .mc-count { font-family: "JetBrains Mono", monospace; font-size: 1.5rem; font-weight: 700; color: #f5f5dc; margin-top: 0.15rem; }
+  .mc-percent { font-family: "JetBrains Mono", monospace; font-size: 0.72rem; color: rgba(244, 240, 227, 0.5); }
 </style>

@@ -1146,7 +1146,7 @@
       if (phaseCount > 0) phaseAccuracy[phase] = phaseSum / phaseCount
     }
 
-    const openingName = opening.value || "Unknown Opening"
+    const openingName = await fetchOpeningNameForSave(uciList)
 
     const insightsRef = collection(db, `users/${currentUserId.value}/insights`)
     await addDoc(insightsRef, {
@@ -1160,6 +1160,30 @@
       moveCounts: myCounts,
       totalMoves: myMoveCount
     })
+  }
+
+  async function fetchOpeningNameForSave(uciList) {
+    const OPENING_LOOKUP_PLIES = 12 // ~6 full moves; reliably still "in book"
+    const playList = uciList.slice(0, OPENING_LOOKUP_PLIES)
+    const bookList = playList.join(",")
+    const url = bookList
+      ? `https://explorer.lichess.ovh/masters?play=${bookList}`
+      : `https://explorer.lichess.ovh/masters`
+
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${LICHESS_TOKEN}`,
+          'Accept': 'application/json'
+        }
+      })
+      if (!response.ok) return "Unknown Opening"
+      const data = await response.json()
+      return data.opening?.name || "Unknown Opening"
+    } catch (e) {
+      console.warn("Opening lookup for insights failed:", e)
+      return "Unknown Opening"
+    }
   }
 </script>
 

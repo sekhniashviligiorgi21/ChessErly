@@ -60,7 +60,7 @@
 
     <button
       class="btn"
-      :style="{ background: `linear-gradient(${bgColor('analyze')})` }"
+      :style="{ background: `linear-gradient(${bgColor('insight')})` }"
       @click="insightsClick()"
     >
       📊 Insights
