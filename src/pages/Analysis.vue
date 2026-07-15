@@ -1145,7 +1145,19 @@
         p++
       }
       if (phaseCount > 0) phaseAccuracy[phase] = phaseSum / phaseCount
+      const blunderSquares = {};
+      let trackNode = moveTree.children[0];
+      let trackPly = 1;
+      while (trackNode) {
+        const side = trackPly % 2 === 1 ? 'white' : 'black';
+        if (side === myColor && (trackNode.accuracy === 'blunder' || trackNode.accuracy === 'mistake')) {
+          const square = trackNode.uci.slice(2, 4); // Get the destination square
+          blunderSquares[square] = (blunderSquares[square] || 0) + 1;
+        }
+      trackNode = trackNode.children[0];
+      trackPly++;
     }
+
 
     const openingName = await fetchOpeningNameForSave(uciList)
 
@@ -1176,6 +1188,7 @@
           moveCounts: myCounts,
           totalMoves: myMoveCount,
           opening: openingName
+          blunderSquares
         }
       })
     } else {
@@ -1193,6 +1206,7 @@
           moveCounts: myCounts,
           totalMoves: myMoveCount,
           opening: openingName
+          blunderSquares
         }
       })
     }
