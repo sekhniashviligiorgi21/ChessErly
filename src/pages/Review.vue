@@ -16,6 +16,12 @@
 
   watch(username, (val) => localStorage.setItem(USERNAME_STORAGE_KEY, val))
 
+  const currentTheme = ref(localStorage.getItem('chesslab_theme') || 'brown')
+  watch(currentTheme, (newTheme) => {
+    document.documentElement.setAttribute('data-theme', newTheme)
+    localStorage.setItem('chesslab_theme', newTheme)
+  }, { immediate: true }) 
+
   const year = ref('')
   const month = ref('month')
   const games = ref([])
@@ -29,6 +35,7 @@
   const chess = new Chess()
   const importSite = ref('chess.com')
   const importMode = ref('last')
+
 
   const currentUser = ref(null)
   const savedGames = ref([])
