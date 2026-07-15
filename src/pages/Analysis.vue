@@ -1165,8 +1165,6 @@
       trackPly++;
     }
 
-    const openingName = await fetchOpeningNameForSave(uciList)
-
 
     const openingName = await fetchOpeningNameForSave(uciList)
 
