@@ -20,6 +20,10 @@
     router.push('/Review')
   }
 
+  function insightsClick(){
+    router.push('/Insights')
+  }
+
   function gameClick() {
     router.push('/vsComputer')
   }
@@ -27,6 +31,7 @@
   const activeButton = computed(() => {
     if (route.path === '/Review') return 'import'
     if (route.path === '/Analysis') return 'analyze'
+    if (route.path === '/Insights') return 'insight'
     if (route.path === '/vsComputer') return 'computer'
     return 'analyze'
   })
@@ -43,6 +48,14 @@
       @click="importClick()"
     >
       🎮 GameImport
+    </button>
+
+    <button
+      class="btn"
+      :style="{ background: `linear-gradient(${bgColor('analyze')})` }"
+      @click="insightsClick()"
+    >
+      🔎 Insights
     </button>
 
     <button

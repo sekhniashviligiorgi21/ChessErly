@@ -950,7 +950,6 @@
         goToStart()
         treeVersion.value++
         
-        // ADD THIS LINE:
         await saveGameInsights()
       }
     } finally {

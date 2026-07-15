@@ -8,7 +8,8 @@ import Play from './pages/Play.vue'
 const routes = [
 	{ path: "/", component: Analysis },
 	{ path: "/Review", component: Review },
-	{ path: "/vsComputer", component: Play },
+	{ path: "/Insights", component: Insights },
+	{ path: "/vsComputer", component: Play }, 
 ]
 
 const router = createRouter({
