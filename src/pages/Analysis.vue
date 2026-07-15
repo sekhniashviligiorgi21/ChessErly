@@ -1213,7 +1213,7 @@
   }
 
   async function fetchOpeningNameForSave(uciList) {
-    const OPENING_LOOKUP_PLIES = 12 // ~6 full moves; reliably still "in book"
+    const OPENING_LOOKUP_PLIES = 12
     const playList = uciList.slice(0, OPENING_LOOKUP_PLIES)
     const bookList = playList.join(",")
     const url = bookList
@@ -1235,6 +1235,9 @@
       return "Unknown Opening"
     }
   }
+} 
+
+</script>
 </script>
 
 <template>
