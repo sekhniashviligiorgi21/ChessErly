@@ -53,17 +53,17 @@
     <button
       class="btn"
       :style="{ background: `linear-gradient(${bgColor('analyze')})` }"
-      @click="insightsClick()"
+      @click="analyzeClick()"
     >
-      🔎 Insights
+      🔎 Analyse
     </button>
 
     <button
       class="btn"
       :style="{ background: `linear-gradient(${bgColor('analyze')})` }"
-      @click="analyzeClick()"
+      @click="insightsClick()"
     >
-      🔎 Analyse
+      📊 Insights
     </button>
 
     <!-- Disabled VS Computer -->

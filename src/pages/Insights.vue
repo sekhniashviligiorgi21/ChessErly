@@ -82,16 +82,6 @@
     return totals
   })
 
-  // Calculate Win/Loss/Draw
-  const results = computed(() => {
-    const res = { win: 0, loss: 0, draw: 0 }
-    insights.value.forEach(g => {
-      // Basic guess based on data we have (this can be improved by saving result to insights)
-      // For now, we just track total games. You can expand on this later.
-    })
-    return res
-  })
-
   // Top 5 Openings
   const topOpenings = computed(() => {
     const counts = {}
@@ -112,16 +102,17 @@
       .slice(0, 5)
   })
 
+  // Updated to use the same image paths as Analysis.vue
   const classificationMeta = {
-    brilliant:  { label: 'Brilliant',  color: '#03aea7', icon: '!!' },
-    great:      { label: 'Great',      color: '#4c8cb5', icon: '!' },
-    best:       { label: 'Best',       color: '#6ad13f', icon: '★' },
-    book:       { label: 'Book',       color: '#ad8760', icon: '📖' },
-    excellent:  { label: 'Excellent',  color: '#90bc36', icon: '✓' },
-    good:       { label: 'Good',       color: '#8eae83', icon: '✓' },
-    inaccuracy: { label: 'Inaccuracy', color: '#f2bc43', icon: '?!' },
-    mistake:    { label: 'Mistake',    color: '#f38800', icon: '?' },
-    blunder:    { label: 'Blunder',    color: '#FF0000', icon: '??' }
+    brilliant:  { label: 'Brilliant',  color: '#03aea7', icon: '/moveClassifications/brilliant.png' },
+    great:      { label: 'Great',      color: '#4c8cb5', icon: '/moveClassifications/great.png' },
+    best:       { label: 'Best',       color: '#6ad13f', icon: '/moveClassifications/best.png' },
+    book:       { label: 'Book',       color: '#ad8760', icon: '/moveClassifications/book.png' },
+    excellent:  { label: 'Excellent',  color: '#90bc36', icon: '/moveClassifications/excellent.png' },
+    good:       { label: 'Good',       color: '#8eae83', icon: '/moveClassifications/good.png' },
+    inaccuracy: { label: 'Inaccuracy', color: '#f2bc43', icon: '/moveClassifications/inaccuracy.png' },
+    mistake:    { label: 'Mistake',    color: '#f38800', icon: '/moveClassifications/mistake.png' },
+    blunder:    { label: 'Blunder',    color: '#FF0000', icon: '/moveClassifications/blunder.png' }
   }
 </script>
 
@@ -149,71 +140,76 @@
         </div>
 
         <div v-else class="insights-grid">
-          <!-- Top Stats Row -->
-          <div class="stat-row">
-            <div class="stat-box">
-              <span class="stat-label">Games Analyzed</span>
-              <span class="stat-value">{{ totalGames }}</span>
+          <!-- LEFT COLUMN (Stats, Phases, Openings) -->
+          <div class="main-column">
+            <!-- Top Stats Row -->
+            <div class="stat-row">
+              <div class="stat-box">
+                <span class="stat-label">Games Analyzed</span>
+                <span class="stat-value">{{ totalGames }}</span>
+              </div>
+              <div class="stat-box">
+                <span class="stat-label">Moves Tracked</span>
+                <span class="stat-value">{{ totalMoves }}</span>
+              </div>
+              <div class="stat-box highlight">
+                <span class="stat-label">Overall Accuracy</span>
+                <span class="stat-value">{{ overallAccuracy !== null ? overallAccuracy + '%' : '—' }}</span>
+              </div>
             </div>
-            <div class="stat-box">
-              <span class="stat-label">Moves Tracked</span>
-              <span class="stat-value">{{ totalMoves }}</span>
+
+            <!-- Phase Accuracy -->
+            <div class="section">
+              <h2 class="section-title">Accuracy by Game Phase</h2>
+              <div class="phase-grid">
+                <div class="phase-box">
+                  <span class="phase-name">Opening</span>
+                  <div class="phase-bar-container">
+                    <div class="phase-bar" :style="{ width: (phaseAccuracy.opening || 0) + '%', background: '#7ec8e3' }"></div>
+                  </div>
+                  <span class="phase-val">{{ phaseAccuracy.opening !== null ? phaseAccuracy.opening + '%' : '—' }}</span>
+                </div>
+                <div class="phase-box">
+                  <span class="phase-name">Middlegame</span>
+                  <div class="phase-bar-container">
+                    <div class="phase-bar" :style="{ width: (phaseAccuracy.middlegame || 0) + '%', background: '#f0d0a3' }"></div>
+                  </div>
+                  <span class="phase-val">{{ phaseAccuracy.middlegame !== null ? phaseAccuracy.middlegame + '%' : '—' }}</span>
+                </div>
+                <div class="phase-box">
+                  <span class="phase-name">Endgame</span>
+                  <div class="phase-bar-container">
+                    <div class="phase-bar" :style="{ width: (phaseAccuracy.endgame || 0) + '%', background: '#a8d97a' }"></div>
+                  </div>
+                  <span class="phase-val">{{ phaseAccuracy.endgame !== null ? phaseAccuracy.endgame + '%' : '—' }}</span>
+                </div>
+              </div>
             </div>
-            <div class="stat-box highlight">
-              <span class="stat-label">Overall Accuracy</span>
-              <span class="stat-value">{{ overallAccuracy !== null ? overallAccuracy + '%' : '—' }}</span>
+
+            <!-- Top Openings -->
+            <div class="section">
+              <h2 class="section-title">Your Most Played Openings</h2>
+              <div class="openings-list">
+                <div v-for="(opening, i) in topOpenings" :key="i" class="opening-row">
+                  <span class="opening-rank">#{{ i + 1 }}</span>
+                  <span class="opening-name">{{ opening.name }}</span>
+                  <span class="opening-games">{{ opening.count }} games</span>
+                  <span class="opening-acc" v-if="opening.avgAccuracy">{{ opening.avgAccuracy }}% acc</span>
+                </div>
+              </div>
             </div>
           </div>
 
-          <!-- Phase Accuracy -->
-          <div class="section">
-            <h2 class="section-title">Accuracy by Game Phase</h2>
-            <div class="phase-grid">
-              <div class="phase-box">
-                <span class="phase-name">Opening</span>
-                <div class="phase-bar-container">
-                  <div class="phase-bar" :style="{ width: (phaseAccuracy.opening || 0) + '%', background: '#7ec8e3' }"></div>
+          <!-- RIGHT COLUMN (Move Classifications) -->
+          <div class="side-column">
+            <div class="section sticky-section">
+              <h2 class="section-title">Total Move Classifications</h2>
+              <div class="move-classes">
+                <div v-for="(meta, key) in classificationMeta" :key="key" class="move-class-box">
+                  <img :src="meta.icon" class="mc-icon-img" :alt="meta.label" />
+                  <span class="mc-label" :style="{ color: meta.color }">{{ meta.label }}</span>
+                  <span class="mc-count">{{ moveCounts[key] }}</span>
                 </div>
-                <span class="phase-val">{{ phaseAccuracy.opening !== null ? phaseAccuracy.opening + '%' : '—' }}</span>
-              </div>
-              <div class="phase-box">
-                <span class="phase-name">Middlegame</span>
-                <div class="phase-bar-container">
-                  <div class="phase-bar" :style="{ width: (phaseAccuracy.middlegame || 0) + '%', background: '#f0d0a3' }"></div>
-                </div>
-                <span class="phase-val">{{ phaseAccuracy.middlegame !== null ? phaseAccuracy.middlegame + '%' : '—' }}</span>
-              </div>
-              <div class="phase-box">
-                <span class="phase-name">Endgame</span>
-                <div class="phase-bar-container">
-                  <div class="phase-bar" :style="{ width: (phaseAccuracy.endgame || 0) + '%', background: '#a8d97a' }"></div>
-                </div>
-                <span class="phase-val">{{ phaseAccuracy.endgame !== null ? phaseAccuracy.endgame + '%' : '—' }}</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Move Classifications -->
-          <div class="section">
-            <h2 class="section-title">Total Move Classifications</h2>
-            <div class="move-classes">
-              <div v-for="(meta, key) in classificationMeta" :key="key" class="move-class-box">
-                <span class="mc-icon" :style="{ color: meta.color }">{{ meta.icon }}</span>
-                <span class="mc-label" :style="{ color: meta.color }">{{ meta.label }}</span>
-                <span class="mc-count">{{ moveCounts[key] }}</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Top Openings -->
-          <div class="section">
-            <h2 class="section-title">Your Most Played Openings</h2>
-            <div class="openings-list">
-              <div v-for="(opening, i) in topOpenings" :key="i" class="opening-row">
-                <span class="opening-rank">#{{ i + 1 }}</span>
-                <span class="opening-name">{{ opening.name }}</span>
-                <span class="opening-games">{{ opening.count }} games</span>
-                <span class="opening-acc" v-if="opening.avgAccuracy">{{ opening.avgAccuracy }}% acc</span>
               </div>
             </div>
           </div>
@@ -258,7 +254,7 @@
     gap: 2rem;
     padding: clamp(1.5rem, 3vw, 2.5rem);
     width: 100%;
-    max-width: 100%; /* Expanded */
+    max-width: 100%;
     box-sizing: border-box;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 18px;
@@ -302,10 +298,34 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  /* Dashboard Grid Layout */
   .insights-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+
+  @media (min-width: 1024px) {
+    .insights-grid {
+      grid-template-columns: 2fr 1fr; /* Left column is twice as wide as right */
+      align-items: start; /* Prevents columns from stretching to equal height */
+    }
+  }
+
+  .main-column {
     display: flex;
     flex-direction: column;
     gap: 2.5rem;
+  }
+
+  .side-column {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .sticky-section {
+    position: sticky;
+    top: 2rem; /* Stays in view if the left column gets super long */
   }
 
   .stat-row {
@@ -399,7 +419,8 @@
 
   .move-classes {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    /* Changed to 2 columns since it's in the narrower side column */
+    grid-template-columns: repeat(2, 1fr); 
     gap: 0.75rem;
   }
 
@@ -410,10 +431,15 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.25rem;
+    gap: 0.35rem;
   }
 
-  .mc-icon { font-size: 1.5rem; font-weight: 700; }
+  .mc-icon-img {
+    width: 32px;
+    height: 32px;
+    object-fit: contain;
+  }
+
   .mc-label { font-size: 0.75rem; font-weight: 600; }
   .mc-count { font-family: "JetBrains Mono", monospace; font-size: 1.2rem; font-weight: 700; color: #f5f5dc; margin-top: 0.25rem; }
 
