@@ -14,13 +14,15 @@
   const USERNAME_STORAGE_KEY = 'chesslab_username'
   const username = ref(localStorage.getItem(USERNAME_STORAGE_KEY) || '')
 
-  watch(username, (val) => localStorage.setItem(USERNAME_STORAGE_KEY, val))
-
+  // --- Apply theme instantly on script load to prevent refresh flashing ---
   const currentTheme = ref(localStorage.getItem('chesslab_theme') || 'brown')
   watch(currentTheme, (newTheme) => {
     document.documentElement.setAttribute('data-theme', newTheme)
     localStorage.setItem('chesslab_theme', newTheme)
-  }, { immediate: true }) 
+  }, { immediate: true })
+  // -----------------------------------------------------------------
+
+  watch(username, (val) => localStorage.setItem(USERNAME_STORAGE_KEY, val))
 
   const year = ref('')
   const month = ref('month')
@@ -35,7 +37,6 @@
   const chess = new Chess()
   const importSite = ref('chess.com')
   const importMode = ref('last')
-
 
   const currentUser = ref(null)
   const savedGames = ref([])
@@ -59,13 +60,12 @@
     savedGames.value = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
   }
 
-    // A simple hash function to bypass Firestore's query size limit on long PGN strings
   function generatePgnHash(pgn) {
     let hash = 0
     for (let i = 0; i < pgn.length; i++) {
       const char = pgn.charCodeAt(i)
       hash = (hash << 5) - hash + char
-      hash &= hash // Convert to 32bit integer
+      hash &= hash
     }
     return String(hash)
   }
@@ -76,14 +76,13 @@
       const gamesRef = collection(db, `users/${currentUser.value.uid}/games`)
       const pgnHash = generatePgnHash(selectedGame.value.pgn)
       
-      // Dedupe check using the short hash instead of the full PGN
       const dupQ = query(gamesRef, where('pgnHash', '==', pgnHash))
       const dupSnap = await getDocs(dupQ)
       if (!dupSnap.empty) return
 
       await addDoc(gamesRef, {
         pgn: selectedGame.value.pgn,
-        pgnHash: pgnHash, // Save the hash for future dedupe checks
+        pgnHash: pgnHash,
         white: selectedGame.value.white,
         black: selectedGame.value.black,
         time_class: selectedGame.value.time_class,

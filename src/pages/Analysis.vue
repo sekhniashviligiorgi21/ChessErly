@@ -2,6 +2,9 @@
   import { ref, shallowRef, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
   import { Chess } from 'chess.js'
   import { TheChessboard } from 'vue3-chessboard'
+  import { auth, db } from '../firebase'
+  import { onAuthStateChanged } from 'firebase/auth'
+  import { collection, addDoc, serverTimestamp } from 'firebase/firestore'
   import 'vue3-chessboard/style.css'
   import Title from "../assets/Title.vue"
   import SettingsPanel from "../assets/SettingsPanel.vue"
@@ -946,10 +949,12 @@
       if (!importCancelled) {
         goToStart()
         treeVersion.value++
+        
+        // ADD THIS LINE:
+        await saveGameInsights()
       }
     } finally {
       isImporting.value = false
-      changeActiveToReport()
     }
   }
 
@@ -1026,6 +1031,137 @@
     if (!importProgress.value.total) return 0
     return Math.round((importProgress.value.current / importProgress.value.total) * 100)
   })
+
+    // Insights tracking logic
+  const currentUserId = ref(null)
+  let pendingGameMeta = null
+
+  onMounted(() => {
+    onAuthStateChanged(auth, (user) => {
+      if (user) currentUserId.value = user.uid
+    })
+  })
+
+  watch(() => route.query, (newQuery) => {
+    if (newQuery.white || newQuery.black) {
+      pendingGameMeta = {
+        white: newQuery.white || 'White',
+        black: newQuery.black || 'Black',
+      }
+    } else {
+      pendingGameMeta = null
+    }
+  }, { immediate: true })
+
+  function calculateMaterialBalance(fen) {
+    const parts = fen.split(' ')
+    const board = parts[0]
+    const values = { p: 1, n: 3, b: 3, r: 5, q: 9 }
+    let whiteMat = 0, blackMat = 0
+    for (const char of board) {
+      if (values[char.toLowerCase()]) {
+        if (char === char.toUpperCase()) whiteMat += values[char.toLowerCase()]
+        else blackMat += values[char.toLowerCase()]
+      }
+    }
+    return { whiteMat, blackMat }
+  }
+
+  function getGamePhases(uciList) {
+    const c = new Chess()
+    let openingEndPly = 12
+    let endgameStartPly = Infinity
+
+    for (let i = 0; i < uciList.length; i++) {
+      c.move(uciList[i])
+      const fen = c.fen()
+      const { whiteMat, blackMat } = calculateMaterialBalance(fen)
+      
+      if ((whiteMat < 14 && blackMat < 14) || (whiteMat < 10 || blackMat < 10)) {
+        if (i >= openingEndPly) {
+          endgameStartPly = i + 1
+          break
+        }
+      }
+    }
+    
+    return {
+      opening: [0, Math.min(openingEndPly, uciList.length)],
+      middlegame: [openingEndPly, Math.min(endgameStartPly, uciList.length)],
+      endgame: [endgameStartPly, uciList.length]
+    }
+  }
+
+  async function saveGameInsights() {
+    if (!currentUserId.value || !pendingGameMeta) return
+    
+    const uciList = []
+    let curr = moveTree.children[0]
+    while (curr) {
+      uciList.push(curr.uci)
+      curr = curr.children[0]
+    }
+
+    if (uciList.length === 0) return
+
+    const myColor = pendingGameMeta.white.toLowerCase() !== 'white' 
+      ? (pendingGameMeta.white.toLowerCase() === 'black' ? 'black' : 'white') 
+      : 'black'
+
+    const weights = { brilliant: 100, great: 100, best: 100, book: 100, excellent: 90, good: 80, inaccuracy: 20, mistake: 10, blunder: 0 }
+    const myCounts = { brilliant: 0, great: 0, best: 0, book: 0, excellent: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0 }
+    let myWeightedSum = 0
+    let myMoveCount = 0
+
+    let node = moveTree.children[0]
+    let ply = 1
+    while (node) {
+      const side = ply % 2 === 1 ? 'white' : 'black'
+      if (side === myColor && node.accuracy && myCounts.hasOwnProperty(node.accuracy)) {
+        myCounts[node.accuracy]++
+        myWeightedSum += weights[node.accuracy] ?? 0
+        myMoveCount++
+      }
+      node = node.children[0]
+      ply++
+    }
+
+    const overallAccuracy = myMoveCount > 0 ? (myWeightedSum / myMoveCount) : null
+
+    const phases = getGamePhases(uciList)
+    const phaseAccuracy = { opening: null, middlegame: null, endgame: null }
+
+    for (const [phase, [start, end]] of Object.entries(phases)) {
+      let phaseSum = 0, phaseCount = 0
+      let n = moveTree.children[0]
+      let p = 1
+      while (n) {
+        const side = p % 2 === 1 ? 'white' : 'black'
+        if (p > start && p <= end && side === myColor && n.accuracy) {
+          phaseSum += weights[n.accuracy] ?? 0
+          phaseCount++
+        }
+        n = n.children[0]
+        p++
+      }
+      if (phaseCount > 0) phaseAccuracy[phase] = phaseSum / phaseCount
+    }
+
+    const openingName = opening.value || "Unknown Opening"
+
+    const insightsRef = collection(db, `users/${currentUserId.value}/insights`)
+    await addDoc(insightsRef, {
+      createdAt: serverTimestamp(),
+      white: pendingGameMeta.white,
+      black: pendingGameMeta.black,
+      myColor: myColor,
+      opening: openingName,
+      overallAccuracy: overallAccuracy,
+      phaseAccuracy: phaseAccuracy,
+      moveCounts: myCounts,
+      totalMoves: myMoveCount
+    })
+  }
 </script>
 
 <template>
