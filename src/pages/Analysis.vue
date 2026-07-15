@@ -1238,7 +1238,6 @@
 } 
 
 </script>
-</script>
 
 <template>
   <!-- Main Settings Integration -->
