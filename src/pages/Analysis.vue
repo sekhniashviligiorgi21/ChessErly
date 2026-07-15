@@ -949,6 +949,7 @@
       }
     } finally {
       isImporting.value = false
+      changeActiveToReport()
     }
   }
 
