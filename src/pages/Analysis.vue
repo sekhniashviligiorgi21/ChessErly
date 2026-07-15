@@ -1046,6 +1046,7 @@
       pendingGameMeta = {
         white: newQuery.white || 'White',
         black: newQuery.black || 'Black',
+        pgn: newQuery.pgn || null // <-- ADD THIS LINE
       }
     } else {
       pendingGameMeta = null
@@ -1149,7 +1150,7 @@
     const openingName = await fetchOpeningNameForSave(uciList)
 
     // Generate PGN and Hash to match with the Games Library
-    const pgn = chess.pgn()
+    const pgn = pendingGameMeta.pgn || chess.pgn()
     function generatePgnHash(pgn) {
       let hash = 0
       for (let i = 0; i < pgn.length; i++) {

@@ -317,7 +317,8 @@
         white: selectedGame.value.white.username,
         black: selectedGame.value.black.username,
         whiteRating: selectedGame.value.white.rating,
-        blackRating: selectedGame.value.black.rating
+        blackRating: selectedGame.value.black.rating,
+        pgn: selectedGame.value.pgn // <-- ADD THIS LINE
       }
     })
   }
