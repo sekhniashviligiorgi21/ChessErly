@@ -15,7 +15,7 @@
   const currentUser = ref(null)
   const insights = ref([])
   const loading = ref(true)
-  const activeTab = ref('overview') // 'overview', 'phases', 'openings', 'moves'
+  const activeTab = ref('overview')
 
   onMounted(() => {
     onAuthStateChanged(auth, async (user) => {
@@ -34,11 +34,14 @@
     if (!currentUser.value) return
     try {
       const q = query(
-        collection(db, `users/${currentUser.value.uid}/insights`),
+        collection(db, `users/${currentUser.value.uid}/games`), // Fetch from the games library
         orderBy('createdAt', 'desc')
       )
       const querySnapshot = await getDocs(q)
-      insights.value = querySnapshot.docs.map(doc => doc.data())
+      // Only keep games that actually have insights data saved inside them
+      insights.value = querySnapshot.docs
+        .map(doc => doc.data())
+        .filter(game => game.insights && game.insights.overallAccuracy !== null)
     } catch (e) {
       console.error("Failed to load insights:", e)
     }
@@ -57,38 +60,29 @@
     return { label: 'Blunder', icon: '/moveClassifications/blunder.png', color: '#FF0000' }
   }
 
-  // --- Computed Statistics ---
+  // --- Computed Statistics (Updated to read from game.insights) ---
   const totalGames = computed(() => insights.value.length)
-  const totalMoves = computed(() => insights.value.reduce((sum, game) => sum + (game.totalMoves || 0), 0))
+  const totalMoves = computed(() => insights.value.reduce((sum, game) => sum + (game.insights?.totalMoves || 0), 0))
 
   const overallAccuracy = computed(() => {
-    const gamesWithAcc = insights.value.filter(g => g.overallAccuracy !== null)
+    const gamesWithAcc = insights.value.filter(g => g.insights?.overallAccuracy !== null)
     if (gamesWithAcc.length === 0) return null
-    const sum = gamesWithAcc.reduce((acc, g) => acc + g.overallAccuracy, 0)
+    const sum = gamesWithAcc.reduce((acc, g) => acc + g.insights.overallAccuracy, 0)
     return (sum / gamesWithAcc.length).toFixed(1)
   })
 
   const overallMeta = computed(() => getAccuracyMeta(overallAccuracy.value ? parseFloat(overallAccuracy.value) : null))
 
-  // Ring geometry for the hero accuracy gauge
-  const RING_RADIUS = 54
-  const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
-  const ringOffset = computed(() => {
-    const pct = overallAccuracy.value ? parseFloat(overallAccuracy.value) : 0
-    return RING_CIRCUMFERENCE - (pct / 100) * RING_CIRCUMFERENCE
-  })
-
-  // Trend: compare most recent slice vs. the rest (insights are ordered desc by createdAt already)
   const RECENT_WINDOW = 5
   const trend = computed(() => {
-    const withAcc = insights.value.filter(g => g.overallAccuracy !== null)
-    if (withAcc.length < 4) return null // not enough data to mean anything
+    const withAcc = insights.value.filter(g => g.insights?.overallAccuracy !== null)
+    if (withAcc.length < 4) return null
 
     const recent = withAcc.slice(0, RECENT_WINDOW)
     const older = withAcc.slice(RECENT_WINDOW)
     if (older.length === 0) return null
 
-    const avg = (arr) => arr.reduce((a, g) => a + g.overallAccuracy, 0) / arr.length
+    const avg = (arr) => arr.reduce((a, g) => a + g.insights.overallAccuracy, 0) / arr.length
     const recentAvg = avg(recent)
     const olderAvg = avg(older)
     const delta = recentAvg - olderAvg
@@ -99,25 +93,24 @@
     }
   })
 
-  // Recent form strip — last N games as small colored blocks
   const RECENT_FORM_COUNT = 8
   const recentForm = computed(() => {
     return insights.value.slice(0, RECENT_FORM_COUNT).map(g => ({
-      accuracy: g.overallAccuracy,
-      meta: getAccuracyMeta(g.overallAccuracy),
-      opening: g.opening && g.opening !== "Unknown Opening" ? g.opening : "Unrecognized Opening",
+      accuracy: g.insights?.overallAccuracy,
+      meta: getAccuracyMeta(g.insights?.overallAccuracy),
+      opening: g.insights?.opening && g.insights.opening !== "Unknown Opening" ? g.insights.opening : "Unrecognized Opening",
       white: g.white,
       black: g.black
-    })).reverse() // oldest -> newest, left to right
+    })).reverse()
   })
 
   const phaseAccuracy = computed(() => {
     const phases = { opening: [], middlegame: [], endgame: [] }
     insights.value.forEach(g => {
-      if (g.phaseAccuracy) {
-        if (g.phaseAccuracy.opening !== null) phases.opening.push(g.phaseAccuracy.opening)
-        if (g.phaseAccuracy.middlegame !== null) phases.middlegame.push(g.phaseAccuracy.middlegame)
-        if (g.phaseAccuracy.endgame !== null) phases.endgame.push(g.phaseAccuracy.endgame)
+      if (g.insights?.phaseAccuracy) {
+        if (g.insights.phaseAccuracy.opening !== null) phases.opening.push(g.insights.phaseAccuracy.opening)
+        if (g.insights.phaseAccuracy.middlegame !== null) phases.middlegame.push(g.insights.phaseAccuracy.middlegame)
+        if (g.insights.phaseAccuracy.endgame !== null) phases.endgame.push(g.insights.phaseAccuracy.endgame)
       }
     })
 
@@ -137,9 +130,9 @@
   const moveCounts = computed(() => {
     const totals = { brilliant: 0, great: 0, best: 0, book: 0, excellent: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0 }
     insights.value.forEach(g => {
-      if (g.moveCounts) {
+      if (g.insights?.moveCounts) {
         for (const key in totals) {
-          totals[key] += g.moveCounts[key] || 0
+          totals[key] += g.insights.moveCounts[key] || 0
         }
       }
     })
@@ -163,15 +156,13 @@
       .filter(seg => seg.count > 0)
   })
 
-  // Top 5 Openings (Fixed Unknown Opening)
   const topOpenings = computed(() => {
     const counts = {}
     insights.value.forEach(g => {
-      // Safely fallback to Unrecognized Opening
-      const name = g.opening && g.opening !== "Unknown Opening" ? g.opening : "Unrecognized Opening"
+      const name = g.insights?.opening && g.insights.opening !== "Unknown Opening" ? g.insights.opening : "Unrecognized Opening"
       if (!counts[name]) counts[name] = { name, count: 0, accuracy: [] }
       counts[name].count++
-      if (g.overallAccuracy !== null) counts[name].accuracy.push(g.overallAccuracy)
+      if (g.insights?.overallAccuracy !== null) counts[name].accuracy.push(g.insights.overallAccuracy)
     })
 
     const overallAvg = overallAccuracy.value ? parseFloat(overallAccuracy.value) : null
@@ -240,11 +231,10 @@
         </div>
 
         <div v-else-if="insights.length === 0" class="empty-state">
-          <p>No data yet. Analyze a game to start building your insights!</p>
+          <p>No data yet. Analyze a game from your library to start building your insights!</p>
         </div>
 
         <div v-else class="dashboard-layout">
-          <!-- Tab Navigation -->
           <div class="tab-nav">
             <button class="tab-btn" :class="{ active: activeTab === 'overview' }" @click="setTab('overview')">Overview</button>
             <button class="tab-btn" :class="{ active: activeTab === 'phases' }" @click="setTab('phases')">Phases</button>
@@ -257,22 +247,12 @@
             <div v-if="activeTab === 'overview'" class="tab-panel">
               <div class="hero-row">
                 <div class="hero-ring-card">
-                  <svg class="ring-svg" viewBox="0 0 140 140">
-                    <circle class="ring-track" cx="70" cy="70" r="54" />
-                    <circle
-                      class="ring-progress"
-                      cx="70" cy="70" r="54"
-                      :style="{
-                        stroke: overallMeta.color,
-                        strokeDasharray: RING_CIRCUMFERENCE,
-                        strokeDashoffset: ringOffset
-                      }"
-                    />
-                  </svg>
-                  <div class="ring-center">
-                    <img v-if="overallMeta.icon" :src="overallMeta.icon" class="ring-icon" />
-                    <span class="ring-value" :style="{ color: overallMeta.color }">{{ overallAccuracy !== null ? overallAccuracy + '%' : '—' }}</span>
-                    <span class="ring-label">Overall Accuracy</span>
+                  <div class="ring-circle" :style="{ '--ring-color': overallMeta.color, '--ring-percent': overallAccuracy || 0 }">
+                    <div class="ring-inner">
+                      <img v-if="overallMeta.icon" :src="overallMeta.icon" class="ring-icon" />
+                      <span class="ring-value" :style="{ color: overallMeta.color }">{{ overallAccuracy !== null ? overallAccuracy + '%' : '—' }}</span>
+                      <span class="ring-label">Overall Accuracy</span>
+                    </div>
                   </div>
                   <div v-if="trend" class="trend-pill" :class="trend.direction">
                     <span v-if="trend.direction === 'up'">▲</span>
@@ -466,431 +446,144 @@
     text-align: center;
   }
 
-  .loading-spinner {
-    position: relative;
-    width: 56px;
-    height: 56px;
-  }
-
+  .loading-spinner { position: relative; width: 56px; height: 56px; }
   .spinner-ring {
-    position: absolute;
-    inset: 0;
-    border-radius: 50%;
-    border: 3px solid transparent;
-    border-top-color: var(--text-highlight);
+    position: absolute; inset: 0; border-radius: 50%;
+    border: 3px solid transparent; border-top-color: var(--text-highlight);
     animation: spinRing 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
   }
-
-  .spinner-ring:nth-child(2) {
-    inset: 7px;
-    border-top-color: #a8d97a;
-    animation-duration: 1.6s;
-    animation-direction: reverse;
-  }
-
-  .spinner-ring:nth-child(3) {
-    inset: 14px;
-    border-top-color: #f4f0e3;
-    animation-duration: 2s;
-  }
-
+  .spinner-ring:nth-child(2) { inset: 7px; border-top-color: #a8d97a; animation-duration: 1.6s; animation-direction: reverse; }
+  .spinner-ring:nth-child(3) { inset: 14px; border-top-color: #f4f0e3; animation-duration: 2s; }
   @keyframes spinRing { to { transform: rotate(360deg); } }
 
-  /* Dashboard Layout */
-  .dashboard-layout {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-    flex: 1;
-    min-height: 0;
-  }
+  .dashboard-layout { display: flex; flex-direction: column; gap: 1.5rem; flex: 1; min-height: 0; }
 
   .tab-nav {
-    display: flex;
-    gap: 0.5rem;
-    background: rgba(0, 0, 0, 0.2);
-    padding: 0.4rem;
-    border-radius: 12px;
-    flex-shrink: 0;
+    display: flex; gap: 0.5rem; background: rgba(0, 0, 0, 0.2);
+    padding: 0.4rem; border-radius: 12px; flex-shrink: 0;
   }
-
   .tab-btn {
-    flex: 1;
-    padding: 0.6rem 1rem;
-    background: transparent;
-    border: none;
-    color: rgba(244, 240, 227, 0.6);
-    font-weight: 600;
-    font-size: 0.9rem;
-    cursor: pointer;
-    border-radius: 8px;
-    transition: all 0.2s ease;
+    flex: 1; padding: 0.6rem 1rem; background: transparent; border: none;
+    color: rgba(244, 240, 227, 0.6); font-weight: 600; font-size: 0.9rem;
+    cursor: pointer; border-radius: 8px; transition: all 0.2s ease;
   }
-
   .tab-btn:hover { color: #f4f0e3; }
-
-  .tab-btn.active {
-    background: var(--btn-active);
-    color: #f5f5dc;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
-  }
+  .tab-btn.active { background: var(--btn-active); color: #f5f5dc; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35); }
 
   .tab-content-area {
-    flex: 1;
-    overflow-y: auto;
-    padding-right: 0.5rem;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(194, 197, 170, 0.4) transparent;
+    flex: 1; overflow-y: auto; padding-right: 0.5rem;
+    scrollbar-width: thin; scrollbar-color: rgba(194, 197, 170, 0.4) transparent;
   }
 
   .tab-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-    animation: fadeIn 0.3s ease;
-    max-width: 760px;
-    margin: 0 auto;
+    display: flex; flex-direction: column; gap: 1.5rem;
+    animation: fadeIn 0.3s ease; max-width: 760px; margin: 0 auto;
   }
-
   @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 
   /* Hero row (Overview) */
-  .hero-row {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 1.5rem;
-    align-items: stretch;
-  }
-
-  @media (max-width: 560px) {
-    .hero-row { grid-template-columns: 1fr; justify-items: center; }
-  }
+  .hero-row { display: grid; grid-template-columns: auto 1fr; gap: 1.5rem; align-items: stretch; }
+  @media (max-width: 560px) { .hero-row { grid-template-columns: 1fr; justify-items: center; } }
 
   .hero-ring-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.75rem;
-    background: rgba(0, 0, 0, 0.22);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 16px;
-    padding: 1.5rem;
-    position: relative;
+    display: flex; flex-direction: column; align-items: center; gap: 0.75rem;
+    background: rgba(0, 0, 0, 0.22); border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 16px; padding: 1.5rem; position: relative;
   }
 
-  .ring-svg {
-    width: 140px;
-    height: 140px;
-    transform: rotate(-90deg);
+  /* Fixed CSS Conic Gradient Ring */
+  .ring-circle {
+    width: 140px; height: 140px; border-radius: 50%;
+    background: conic-gradient(
+      var(--ring-color) calc(var(--ring-percent) * 1%),
+      rgba(0,0,0,0.3) 0
+    );
+    display: flex; align-items: center; justify-content: center; position: relative;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
   }
-
-  .ring-track {
-    fill: none;
-    stroke: rgba(0, 0, 0, 0.35);
-    stroke-width: 10;
+  .ring-inner {
+    width: 110px; height: 110px; background: linear-gradient(145deg, var(--panel-1), var(--panel-2));
+    border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 0.15rem; box-shadow: inset 0 2px 5px rgba(0,0,0,0.4);
   }
-
-  .ring-progress {
-    fill: none;
-    stroke-width: 10;
-    stroke-linecap: round;
-    transition: stroke-dashoffset 0.7s ease, stroke 0.3s ease;
-  }
-
-  .ring-center {
-    position: absolute;
-    top: 1.5rem;
-    left: 0;
-    width: 140px;
-    height: 140px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 0.15rem;
-  }
-
   .ring-icon { width: 26px; height: 26px; margin-bottom: 0.1rem; }
-
-  .ring-value {
-    font-family: "JetBrains Mono", monospace;
-    font-size: 1.7rem;
-    font-weight: 700;
-  }
-
+  .ring-value { font-family: "JetBrains Mono", monospace; font-size: 1.7rem; font-weight: 700; }
   .ring-label {
-    font-size: 0.68rem;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: rgba(244, 240, 227, 0.55);
-    font-weight: 600;
+    font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px;
+    color: rgba(244, 240, 227, 0.55); font-weight: 600;
   }
 
   .trend-pill {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    font-size: 0.78rem;
-    font-weight: 600;
-    padding: 0.3rem 0.7rem;
-    border-radius: 999px;
-    background: rgba(0, 0, 0, 0.25);
+    display: flex; align-items: center; gap: 0.35rem; font-size: 0.78rem; font-weight: 600;
+    padding: 0.3rem 0.7rem; border-radius: 999px; background: rgba(0, 0, 0, 0.25);
   }
-
   .trend-pill.up { color: #8fd97a; }
   .trend-pill.down { color: #ff8a80; }
   .trend-pill.flat { color: rgba(244, 240, 227, 0.6); }
 
-  .hero-stats-col {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    justify-content: center;
-  }
+  .hero-stats-col { display: flex; flex-direction: column; gap: 1rem; justify-content: center; }
 
-  /* Stats */
   .stat-box {
-    background: rgba(0, 0, 0, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 12px;
-    padding: 1.2rem 1rem;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
+    background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px; padding: 1.2rem 1rem; display: flex; flex-direction: column;
+    align-items: center; gap: 0.5rem;
   }
+  .stat-label { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: rgba(244, 240, 227, 0.6); }
+  .stat-value { font-family: "JetBrains Mono", monospace; font-size: 1.8rem; font-weight: 700; color: #f5f5dc; }
 
-  .stat-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: rgba(244, 240, 227, 0.6);
-  }
-
-  .stat-value {
-    font-family: "JetBrains Mono", monospace;
-    font-size: 1.8rem;
-    font-weight: 700;
-    color: #f5f5dc;
-  }
-
-  .quick-glance-phases {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1rem;
-  }
-
+  .quick-glance-phases { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
   .mini-phase {
-    background: rgba(0,0,0,0.2);
-    padding: 1rem;
-    border-radius: 10px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.25rem;
+    background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 10px;
+    display: flex; flex-direction: column; align-items: center; gap: 0.25rem;
   }
   .mini-phase span { font-size: 0.75rem; color: rgba(244,240,227,0.6); text-transform: uppercase; }
   .mini-phase strong { font-size: 1.1rem; font-family: "JetBrains Mono", monospace; }
 
-  /* Recent form */
-  .recent-form-section {
-    display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
-  }
-
-  .section-subtitle {
-    font-family: serif;
-    color: #f5f5dc;
-    font-size: 0.95rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin: 0;
-  }
-
-  .recent-form-strip {
-    display: flex;
-    gap: 0.4rem;
-  }
-
-  .form-block {
-    flex: 1;
-    height: 2.2rem;
-    border-radius: 6px;
-    cursor: default;
-    transition: transform 0.15s ease;
-  }
-
+  .recent-form-section { display: flex; flex-direction: column; gap: 0.6rem; }
+  .section-subtitle { font-family: serif; color: #f5f5dc; font-size: 0.95rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin: 0; }
+  .recent-form-strip { display: flex; gap: 0.4rem; }
+  .form-block { flex: 1; height: 2.2rem; border-radius: 6px; cursor: default; transition: transform 0.15s ease; }
   .form-block:hover { transform: translateY(-3px); }
 
   /* Phases Tab */
-  .phase-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-  }
-
-  .phase-box {
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 12px;
-    padding: 1.5rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .phase-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
+  .phase-grid { display: flex; flex-direction: column; gap: 1.5rem; }
+  .phase-box { background: rgba(0, 0, 0, 0.2); border-radius: 12px; padding: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem; }
+  .phase-header { display: flex; justify-content: space-between; align-items: center; }
   .phase-name { font-size: 1.1rem; font-weight: 600; color: rgba(244, 240, 227, 0.9); text-transform: capitalize; }
   .phase-icon-img { width: 32px; height: 32px; }
-
-  .phase-bar-container {
-    height: 12px;
-    background: rgba(0, 0, 0, 0.4);
-    border-radius: 6px;
-    overflow: hidden;
-  }
-
-  .phase-bar {
-    height: 100%;
-    border-radius: 6px;
-    transition: width 0.5s ease;
-    box-shadow: 0 0 8px rgba(255,255,255,0.1);
-  }
-
-  .phase-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-  }
-
-  .phase-n {
-    font-size: 0.75rem;
-    color: rgba(244, 240, 227, 0.5);
-  }
-
-  .phase-val {
-    font-family: "JetBrains Mono", monospace;
-    font-size: 1.4rem;
-    font-weight: 700;
-  }
+  .phase-bar-container { height: 12px; background: rgba(0, 0, 0, 0.4); border-radius: 6px; overflow: hidden; }
+  .phase-bar { height: 100%; border-radius: 6px; transition: width 0.5s ease; box-shadow: 0 0 8px rgba(255,255,255,0.1); }
+  .phase-footer { display: flex; justify-content: space-between; align-items: baseline; }
+  .phase-n { font-size: 0.75rem; color: rgba(244, 240, 227, 0.5); }
+  .phase-val { font-family: "JetBrains Mono", monospace; font-size: 1.4rem; font-weight: 700; }
 
   /* Openings Tab */
-  .openings-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
+  .openings-list { display: flex; flex-direction: column; gap: 0.75rem; }
   .opening-row {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 1rem 1.5rem;
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 10px;
-    border: 1px solid transparent;
-    transition: border-color 0.2s;
+    display: flex; align-items: center; gap: 1rem; padding: 1rem 1.5rem;
+    background: rgba(0, 0, 0, 0.2); border-radius: 10px; border: 1px solid transparent; transition: border-color 0.2s;
   }
   .opening-row:hover { border-color: rgba(255, 255, 255, 0.1); }
-
-  .opening-rank {
-    font-family: "JetBrains Mono", monospace;
-    font-weight: 700;
-    color: rgba(244, 240, 227, 0.4);
-    font-size: 0.9rem;
-    width: 30px;
-  }
-
-  .opening-name {
-    flex: 1;
-    font-weight: 600;
-    color: #f5f5dc;
-    font-size: 0.95rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .opening-games {
-    font-family: "JetBrains Mono", monospace;
-    color: rgba(244, 240, 227, 0.5);
-    font-size: 0.85rem;
-  }
-
-  .opening-acc-container {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    background: rgba(255,255,255,0.05);
-    padding: 0.3rem 0.6rem;
-    border-radius: 8px;
-  }
-
+  .opening-rank { font-family: "JetBrains Mono", monospace; font-weight: 700; color: rgba(244, 240, 227, 0.4); font-size: 0.9rem; width: 30px; }
+  .opening-name { flex: 1; font-weight: 600; color: #f5f5dc; font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .opening-games { font-family: "JetBrains Mono", monospace; color: rgba(244, 240, 227, 0.5); font-size: 0.85rem; }
+  .opening-acc-container { display: flex; align-items: center; gap: 0.4rem; background: rgba(255,255,255,0.05); padding: 0.3rem 0.6rem; border-radius: 8px; }
   .opening-acc-icon { width: 20px; height: 20px; }
-  .opening-acc {
-    font-family: "JetBrains Mono", monospace;
-    font-size: 0.9rem;
-    font-weight: 700;
-  }
-
-  .opening-comparison {
-    font-family: "JetBrains Mono", monospace;
-    font-size: 0.72rem;
-    font-weight: 700;
-    padding: 0.1rem 0.35rem;
-    border-radius: 6px;
-    background: rgba(0, 0, 0, 0.25);
-  }
-
+  .opening-acc { font-family: "JetBrains Mono", monospace; font-size: 0.9rem; font-weight: 700; }
+  .opening-comparison { font-family: "JetBrains Mono", monospace; font-size: 0.72rem; font-weight: 700; padding: 0.1rem 0.35rem; border-radius: 6px; background: rgba(0, 0, 0, 0.25); }
   .opening-comparison.up { color: #8fd97a; }
   .opening-comparison.down { color: #ff8a80; }
 
   /* Move Classes Tab */
-  .move-bar-container {
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 12px;
-    padding: 1rem;
-  }
-
-  .move-bar {
-    display: flex;
-    width: 100%;
-    height: 1.8rem;
-    border-radius: 8px;
-    overflow: hidden;
-    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
-  }
-
-  .move-bar-segment {
-    height: 100%;
-    transition: width 0.5s ease;
-  }
-
-  .move-classes-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 1rem;
-  }
-
+  .move-bar-container { background: rgba(0, 0, 0, 0.2); border-radius: 12px; padding: 1rem; }
+  .move-bar { display: flex; width: 100%; height: 1.8rem; border-radius: 8px; overflow: hidden; box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35); }
+  .move-bar-segment { height: 100%; transition: width 0.5s ease; }
+  .move-classes-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; }
   .move-class-box {
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 12px;
-    padding: 1.5rem 1rem;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.35rem;
-    transition: transform 0.2s;
+    background: rgba(0, 0, 0, 0.2); border-radius: 12px; padding: 1.5rem 1rem;
+    display: flex; flex-direction: column; align-items: center; gap: 0.35rem; transition: transform 0.2s;
   }
   .move-class-box:hover { transform: translateY(-2px); }
-
   .mc-icon-img { width: 36px; height: 36px; }
   .mc-label { font-size: 0.8rem; font-weight: 600; }
   .mc-count { font-family: "JetBrains Mono", monospace; font-size: 1.5rem; font-weight: 700; color: #f5f5dc; margin-top: 0.15rem; }

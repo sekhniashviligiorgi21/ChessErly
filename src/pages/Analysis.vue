@@ -4,7 +4,7 @@
   import { TheChessboard } from 'vue3-chessboard'
   import { auth, db } from '../firebase'
   import { onAuthStateChanged } from 'firebase/auth'
-  import { collection, addDoc, serverTimestamp } from 'firebase/firestore'
+  import { collection, addDoc, serverTimestamp, query, where, getDocs, updateDoc, doc } from 'firebase/firestore'
   import 'vue3-chessboard/style.css'
   import Title from "../assets/Title.vue"
   import SettingsPanel from "../assets/SettingsPanel.vue"
@@ -1148,18 +1148,53 @@
 
     const openingName = await fetchOpeningNameForSave(uciList)
 
-    const insightsRef = collection(db, `users/${currentUserId.value}/insights`)
-    await addDoc(insightsRef, {
-      createdAt: serverTimestamp(),
-      white: pendingGameMeta.white,
-      black: pendingGameMeta.black,
-      myColor: myColor,
-      opening: openingName,
-      overallAccuracy: overallAccuracy,
-      phaseAccuracy: phaseAccuracy,
-      moveCounts: myCounts,
-      totalMoves: myMoveCount
-    })
+    // Generate PGN and Hash to match with the Games Library
+    const pgn = chess.pgn()
+    function generatePgnHash(pgn) {
+      let hash = 0
+      for (let i = 0; i < pgn.length; i++) {
+        const char = pgn.charCodeAt(i)
+        hash = (hash << 5) - hash + char
+        hash &= hash
+      }
+      return String(hash)
+    }
+    const pgnHash = generatePgnHash(pgn)
+
+    // Find the corresponding game in the library and update it with insights
+    const gamesRef = collection(db, `users/${currentUserId.value}/games`)
+    const dupQ = query(gamesRef, where('pgnHash', '==', pgnHash))
+    const dupSnap = await getDocs(dupQ)
+
+    if (!dupSnap.empty) {
+      const gameDoc = dupSnap.docs[0]
+      await updateDoc(doc(db, `users/${currentUserId.value}/games`, gameDoc.id), {
+        insights: {
+          overallAccuracy,
+          phaseAccuracy,
+          moveCounts: myCounts,
+          totalMoves: myMoveCount,
+          opening: openingName
+        }
+      })
+    } else {
+      // Fallback: If it wasn't in the library (e.g. pasted PGN directly to analysis page), save it as a new game
+      await addDoc(gamesRef, {
+        pgn,
+        pgnHash,
+        white: pendingGameMeta.white,
+        black: pendingGameMeta.black,
+        time_class: 'unknown',
+        createdAt: serverTimestamp(),
+        insights: {
+          overallAccuracy,
+          phaseAccuracy,
+          moveCounts: myCounts,
+          totalMoves: myMoveCount,
+          opening: openingName
+        }
+      })
+    }
   }
 
   async function fetchOpeningNameForSave(uciList) {
