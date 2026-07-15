@@ -50,66 +50,63 @@
     })
   })
 
-  async function fetchSavedGames() {
+    async function fetchSavedGames() {
     if (!currentUser.value) return
-    const q = query(
-      collection(db, `users/${currentUser.value.uid}/games`),
-      orderBy('createdAt', 'desc')
-    )
-    const querySnapshot = await getDocs(q)
-    savedGames.value = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-  }
-
-  function generatePgnHash(pgn) {
-    let hash = 0
-    for (let i = 0; i < pgn.length; i++) {
-      const char = pgn.charCodeAt(i)
-      hash = (hash << 5) - hash + char
-      hash &= hash
-    }
-    return String(hash)
-  }
-
-  async function autoSaveGame() {
-    if (!currentUser.value || !selectedGame.value) return
     try {
-      const gamesRef = collection(db, `users/${currentUser.value.uid}/games`)
-      const pgnHash = generatePgnHash(selectedGame.value.pgn)
+      const q = query(
+        collection(db, `users/${currentUser.value.uid}/games`),
+        orderBy('createdAt', 'desc')
+      )
+      const querySnapshot = await getDocs(q)
       
-      const dupQ = query(gamesRef, where('pgnHash', '==', pgnHash))
-      const dupSnap = await getDocs(dupQ)
-      if (!dupSnap.empty) return
-
-      await addDoc(gamesRef, {
-        pgn: selectedGame.value.pgn,
-        pgnHash: pgnHash,
-        white: selectedGame.value.white,
-        black: selectedGame.value.black,
-        time_class: selectedGame.value.time_class,
-        createdAt: serverTimestamp()
+      // Safely map documents and ensure all required fields exist
+      savedGames.value = querySnapshot.docs.map(doc => {
+        const data = doc.data()
+        return {
+          id: doc.id,
+          pgn: data.pgn || "",
+          time_class: data.time_class || "unknown",
+          // Ensure white/black objects always have a username string
+          white: { 
+            username: data.white?.username || "White", 
+            rating: data.white?.rating || 0, 
+            result: data.white?.result || "unknown" 
+          },
+          black: { 
+            username: data.black?.username || "Black", 
+            rating: data.black?.rating || 0, 
+            result: data.black?.result || "unknown" 
+          },
+          ...data
+        }
       })
-      fetchSavedGames()
     } catch (e) {
-      console.error('Auto-save failed:', e)
-      saveStatus.value = 'Failed to save game.'
-      setTimeout(() => saveStatus.value = '', 2500)
+      console.error("Failed to fetch saved games:", e)
+      savedGames.value = [] // Prevent crash if Firebase index isn't ready
     }
   }
 
-  async function deleteSavedGame(gameId, event) {
-    event.stopPropagation()
-    if (!confirm('Delete this game?')) return
-    try {
-      await deleteDoc(doc(db, `users/${currentUser.value.uid}/games`, gameId))
-      savedGames.value = savedGames.value.filter(g => g.id !== gameId)
-    } catch (e) { console.error(e) }
+  function formatResult(game) {
+    // Safely handle missing username data
+    const myUsername = (username.value || '').toLowerCase()
+    const whiteUsername = (game.white?.username || '').toLowerCase()
+    const isWhite = whiteUsername === myUsername
+    
+    const me = isWhite ? (game.white || {}) : (game.black || {})
+    const opponent = isWhite ? (game.black || {}) : (game.white || {})
+    
+    let result = '½-½'
+    if (me.result === 'win') result = '1-0'
+    else if (['resigned', 'checkmated', 'abandoned', 'lose'].includes(me.result)) result = '0-1'
+    
+    return { 
+      opponent: opponent.username || "Unknown", 
+      result, 
+      myColor: isWhite ? 'White' : 'Black', 
+      myRating: me.rating || 0, 
+      oppRating: opponent.rating || 0 
+    }
   }
-
-  const pgnText = ref('')
-  const fenText = ref('')
-  const isPasteSource = computed(() =>
-    importSite.value === 'pgn' || importSite.value === 'fen' || importSite.value === 'library'
-  )
 
   function normalizeLichessLine(line) {
     const lGame = JSON.parse(line)
@@ -255,15 +252,6 @@
     })
   }
 
-  function formatResult(game) {
-    const isWhite = game.white.username.toLowerCase() === (username.value || '').toLowerCase()
-    const me = isWhite ? game.white : game.black
-    const opponent = isWhite ? game.black : game.white
-    let result = '½-½'
-    if (me.result === 'win') result = '1-0'
-    else if (['resigned', 'checkmated', 'abandoned', 'lose'].includes(me.result)) result = '0-1'
-    return { opponent: opponent.username, result, myColor: isWhite ? 'White' : 'Black', myRating: me.rating, oppRating: opponent.rating }
-  }
 
   async function analyseGame() {
     if (!selectedGame.value || gameUci.value.length === 0) return
