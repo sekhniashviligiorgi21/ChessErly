@@ -1269,7 +1269,6 @@
       return "Unknown Opening"
     }
   }
-} 
 
 </script>
 
