@@ -1187,7 +1187,7 @@
           phaseAccuracy,
           moveCounts: myCounts,
           totalMoves: myMoveCount,
-          opening: openingName
+          opening: openingName,
           blunderSquares
         }
       })
@@ -1205,7 +1205,7 @@
           phaseAccuracy,
           moveCounts: myCounts,
           totalMoves: myMoveCount,
-          opening: openingName
+          opening: openingName,
           blunderSquares
         }
       })
