@@ -1187,6 +1187,36 @@
       piecePly++;
     }
 
+        // 3. Track Playstyle Data
+    let earlyTrades = 0;
+    let evalSwings = 0;
+    const tempChess = new Chess();
+    let psNode = moveTree.children[0];
+    let psPly = 1;
+    while (psNode) {
+      const uci = psNode.uci;
+      const moveObj = tempChess.move({ from: uci.substring(0, 2), to: uci.substring(2, 4), promotion: uci.length > 4 ? uci[4] : undefined });
+      if (moveObj && moveObj.captured && psPly <= 12) earlyTrades++;
+
+      if (psNode.analysisData?.eval && psNode.parent?.analysisData?.eval) {
+        if (psNode.parent.analysisData.eval.type === 'cp' && psNode.analysisData.eval.type === 'cp') {
+          if (Math.abs(psNode.analysisData.eval.value - psNode.parent.analysisData.eval.value) > 100) {
+            evalSwings++;
+          }
+        }
+      }
+      psNode = psNode.children[0];
+      psPly++;
+    }
+
+    const playstyle = {
+      earlyTrades,
+      evalSwings,
+      brilliantMoves: myCounts.brilliant + myCounts.great,
+      endgameAcc: phaseAccuracy.endgame || 0,
+      openingAcc: phaseAccuracy.opening || 0
+    };
+
     const openingName = await fetchOpeningNameForSave(uciList)
 
     // Generate PGN and Hash to match with the Games Library
@@ -1219,7 +1249,8 @@
           opening: openingName,
           blunderSquares,
           goodSquares,
-          pieceStats
+          pieceStats,
+          playstyle
         }
       })
     } else {
@@ -1240,7 +1271,8 @@
           opening: openingName,
           blunderSquares,
           goodSquares,
-          pieceStats
+          pieceStats,
+          playstyle
         }
       })
     }
