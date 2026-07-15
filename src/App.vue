@@ -9,17 +9,6 @@
 </template>
 
 <style>
-  /*
-    Each theme now also defines --board-light / --board-dark, used to paint
-    the actual chessboard squares (see Analysis.vue's :deep(.cg-board) rule),
-    so the board itself follows the selected theme instead of staying a fixed
-    brown regardless of what's picked in Settings.
-
-    Palette pass: the old blue/green/cherry variants used near-saturated
-    "web UI" colors (#0ea5e9, #10b981, #dc2626) that clashed with the
-    wood-panel aesthetic. All accent colors below are pulled in toward
-    lower saturation / mid brightness so nothing reads as a bright web button.
-  */
 
   :root, [data-theme="brown"] {
     --bg-1: #4b2e12; --bg-2: #6f4518; --bg-3: #7f4f24;

@@ -17,7 +17,6 @@
   const loading = ref(true)
   const tabSwitching = ref(false)
 
-  // --- Tab persists across reloads, same pattern as theme ---
   const TABS = ['overview', 'openings', 'heatmap', 'moves']
   const storedTab = localStorage.getItem('chesslab_insights_tab')
   const activeTab = ref(TABS.includes(storedTab) ? storedTab : 'overview')
@@ -25,7 +24,6 @@
   function setTab(tab) {
     if (tab === activeTab.value) return
     tabSwitching.value = true
-    // brief transition instead of a full-page blocking spinner on every tab click
     requestAnimationFrame(() => {
       activeTab.value = tab
       localStorage.setItem('chesslab_insights_tab', tab)
@@ -62,9 +60,6 @@
     }
   }
 
-  // --- Helper: Map Accuracy to Classification ---
-  // Colors now resolve to CSS custom properties so every theme can override them;
-  // the hex values below are only the :root fallback defaults (see <style>).
   function getAccuracyMeta(acc) {
     if (acc === null || acc === undefined) return { label: 'N/A', icon: null, color: 'var(--acc-na, #666)' }
     if (acc >= 95) return { label: 'Brilliant', icon: '/moveClassifications/brilliant.png', color: 'var(--acc-brilliant, #03aea7)' }
@@ -77,7 +72,6 @@
     return { label: 'Blunder', icon: '/moveClassifications/blunder.png', color: 'var(--acc-blunder, #FF0000)' }
   }
 
-  // --- Computed Statistics ---
   const totalGames = computed(() => insights.value.length)
   const totalMoves = computed(() => insights.value.reduce((sum, game) => sum + (game.insights?.totalMoves || 0), 0))
 
@@ -145,24 +139,23 @@
       .filter(seg => seg.count > 0)
   })
 
-  // --- Blunder Heatmap Logic ---
-  const blunderHeatmap = computed(() => {
+  // --- Heatmap Logic Generator (Reusable for Good & Bad) ---
+  function generateHeatmapData(type) {
+    const squareKey = type === 'bad' ? 'blunderSquares' : 'goodSquares';
     const squares = {};
     let max = 0;
     insights.value.forEach(g => {
-      if (g.insights?.blunderSquares) {
-        for (const sq in g.insights.blunderSquares) {
-          squares[sq] = (squares[sq] || 0) + g.insights.blunderSquares[sq];
+      if (g.insights?.[squareKey]) {
+        for (const sq in g.insights[squareKey]) {
+          squares[sq] = (squares[sq] || 0) + g.insights[squareKey][sq];
           if (squares[sq] > max) max = squares[sq];
         }
       }
     });
     return { squares, max };
-  });
+  }
 
-  const totalBlunders = computed(() => Object.values(blunderHeatmap.value.squares).reduce((a, b) => a + b, 0))
-
-  const boardSquares = computed(() => {
+  function generateBoardData(heatmap) {
     const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
     const ranks = [8, 7, 6, 5, 4, 3, 2, 1];
     const rows = [];
@@ -170,16 +163,23 @@
       const row = [];
       for (const file of files) {
         const sq = `${file}${rank}`;
-        const count = blunderHeatmap.value.squares[sq] || 0;
-        const intensity = blunderHeatmap.value.max > 0 ? count / blunderHeatmap.value.max : 0;
+        const count = heatmap.squares[sq] || 0;
+        const intensity = heatmap.max > 0 ? count / heatmap.max : 0;
         row.push({ sq, count, intensity });
       }
       rows.push(row);
     }
     return rows;
-  });
+  }
 
-  // --- Tap-to-reveal for touch devices, since :hover tooltips don't fire there ---
+  const badHeatmap = computed(() => generateHeatmapData('bad'));
+  const totalBadMoves = computed(() => Object.values(badHeatmap.value.squares).reduce((a, b) => a + b, 0));
+  const badBoardSquares = computed(() => generateBoardData(badHeatmap.value));
+
+  const goodHeatmap = computed(() => generateHeatmapData('good'));
+  const totalGoodMoves = computed(() => Object.values(goodHeatmap.value.squares).reduce((a, b) => a + b, 0));
+  const goodBoardSquares = computed(() => generateBoardData(goodHeatmap.value));
+
   const selectedSquare = ref(null)
   function tapSquare(sq) {
     selectedSquare.value = selectedSquare.value?.sq === sq.sq ? null : sq
@@ -339,59 +339,96 @@
               <!-- HEATMAP TAB -->
               <template v-if="activeTab === 'heatmap'">
                 <div class="heatmap-panel">
-                  <div class="heatmap-header">
-                    <h3 class="section-subtitle">Blunder &amp; Mistake Heatmap</h3>
-                    <span class="heatmap-total">{{ totalBlunders }} total bad moves mapped</span>
-                  </div>
-
-                  <div v-if="totalBlunders === 0" class="panel-empty">
-                    <p>No mistakes mapped yet — nice, or just early days. This fills in as you analyze more games.</p>
-                  </div>
-
-                  <template v-else>
-                    <div class="heatmap-board-wrapper">
-                      <div class="heatmap-board">
-                        <div class="heatmap-rank-labels" aria-hidden="true">
-                          <span v-for="r in 8" :key="r">{{ 9 - r }}</span>
-                        </div>
-                        <div class="heatmap-grid-area">
-                          <div class="heatmap-row" v-for="row in boardSquares" :key="row[0].sq[1]">
-                            <button
-                              v-for="sq in row"
-                              :key="sq.sq"
-                              type="button"
-                              class="heatmap-square"
-                              :class="{
-                                light: (sq.sq.charCodeAt(0) + sq.sq.charCodeAt(1)) % 2 === 0,
-                                dark: (sq.sq.charCodeAt(0) + sq.sq.charCodeAt(1)) % 2 !== 0,
-                                active: sq.intensity > 0,
-                                selected: selectedSquare?.sq === sq.sq
-                              }"
-                              :style="{ '--intensity': sq.intensity }"
-                              :aria-label="`${sq.sq}: ${sq.count} mistake${sq.count === 1 ? '' : 's'}`"
-                              :title="`${sq.sq}: ${sq.count} mistake${sq.count === 1 ? '' : 's'}`"
-                              @click="tapSquare(sq)"
-                            >
-                              <span v-if="sq.count > 0" class="sq-count" aria-hidden="true">{{ sq.count }}</span>
-                            </button>
+                  <div class="heatmap-boards-container">
+                    <!-- BAD MOVES HEATMAP -->
+                    <div class="heatmap-instance">
+                      <div class="heatmap-header">
+                        <h3 class="section-subtitle bad-color">Mistakes & Blunders</h3>
+                        <span class="heatmap-total">{{ totalBadMoves }} mapped</span>
+                      </div>
+                      <div class="heatmap-board-wrapper">
+                        <div class="heatmap-board">
+                          <div class="heatmap-rank-labels" aria-hidden="true">
+                            <span v-for="r in 8" :key="r">{{ 9 - r }}</span>
                           </div>
-                          <div class="heatmap-file-labels" aria-hidden="true">
-                            <span v-for="f in ['a','b','c','d','e','f','g','h']" :key="f">{{ f }}</span>
+                          <div class="heatmap-grid-area">
+                            <div class="heatmap-row" v-for="row in badBoardSquares" :key="row[0].sq[1]">
+                              <button
+                                v-for="sq in row"
+                                :key="sq.sq"
+                                type="button"
+                                class="heatmap-square bad"
+                                :class="{
+                                  light: (sq.sq.charCodeAt(0) + sq.sq.charCodeAt(1)) % 2 === 0,
+                                  dark: (sq.sq.charCodeAt(0) + sq.sq.charCodeAt(1)) % 2 !== 0,
+                                  active: sq.intensity > 0,
+                                  selected: selectedSquare?.sq === sq.sq
+                                }"
+                                :style="{ '--intensity': sq.intensity }"
+                                :aria-label="`${sq.sq}: ${sq.count} mistake${sq.count === 1 ? '' : 's'}`"
+                                :title="`${sq.sq}: ${sq.count} mistake${sq.count === 1 ? '' : 's'}`"
+                                @click="tapSquare(sq)"
+                              >
+                                <span v-if="sq.count > 0" class="sq-count" aria-hidden="true">{{ sq.count }}</span>
+                              </button>
+                            </div>
+                            <div class="heatmap-file-labels" aria-hidden="true">
+                              <span v-for="f in ['a','b','c','d','e','f','g','h']" :key="f">{{ f }}</span>
+                            </div>
                           </div>
                         </div>
                       </div>
                     </div>
 
-                    <!-- Tap-to-reveal readout, needed since :hover tooltips don't work on touch -->
-                    <p class="heatmap-selected-readout" :class="{ visible: selectedSquare }">
-                      <template v-if="selectedSquare">
-                        <strong>{{ selectedSquare.sq }}</strong> — {{ selectedSquare.count }} mistake{{ selectedSquare.count === 1 ? '' : 's' }}
-                      </template>
-                      <template v-else>Tap a square to see its exact count.</template>
-                    </p>
+                    <!-- GOOD MOVES HEATMAP -->
+                    <div class="heatmap-instance">
+                      <div class="heatmap-header">
+                        <h3 class="section-subtitle good-color">Brilliant & Best Moves</h3>
+                        <span class="heatmap-total">{{ totalGoodMoves }} mapped</span>
+                      </div>
+                      <div class="heatmap-board-wrapper">
+                        <div class="heatmap-board">
+                          <div class="heatmap-rank-labels" aria-hidden="true">
+                            <span v-for="r in 8" :key="r">{{ 9 - r }}</span>
+                          </div>
+                          <div class="heatmap-grid-area">
+                            <div class="heatmap-row" v-for="row in goodBoardSquares" :key="row[0].sq[1]">
+                              <button
+                                v-for="sq in row"
+                                :key="sq.sq"
+                                type="button"
+                                class="heatmap-square good"
+                                :class="{
+                                  light: (sq.sq.charCodeAt(0) + sq.sq.charCodeAt(1)) % 2 === 0,
+                                  dark: (sq.sq.charCodeAt(0) + sq.sq.charCodeAt(1)) % 2 !== 0,
+                                  active: sq.intensity > 0,
+                                  selected: selectedSquare?.sq === sq.sq
+                                }"
+                                :style="{ '--intensity': sq.intensity }"
+                                :aria-label="`${sq.sq}: ${sq.count} good move${sq.count === 1 ? '' : 's'}`"
+                                :title="`${sq.sq}: ${sq.count} good move${sq.count === 1 ? '' : 's'}`"
+                                @click="tapSquare(sq)"
+                              >
+                                <span v-if="sq.count > 0" class="sq-count" aria-hidden="true">{{ sq.count }}</span>
+                              </button>
+                            </div>
+                            <div class="heatmap-file-labels" aria-hidden="true">
+                              <span v-for="f in ['a','b','c','d','e','f','g','h']" :key="f">{{ f }}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
 
-                    <p class="heatmap-info">Squares glow brighter red where you make the most mistakes. Use this to spot tactical blind spots in your games.</p>
-                  </template>
+                  <p class="heatmap-selected-readout" :class="{ visible: selectedSquare }">
+                    <template v-if="selectedSquare">
+                      <strong>{{ selectedSquare.sq }}</strong> — {{ selectedSquare.count }} move{{ selectedSquare.count === 1 ? '' : 's' }}
+                    </template>
+                    <template v-else>Tap a square to see its exact count.</template>
+                  </p>
+
+                  <p class="heatmap-info">Left board shows where you blunder. Right board shows where you play accurately.</p>
                 </div>
               </template>
 
@@ -422,12 +459,6 @@
 <style scoped>
   @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap');
 
-  /*
-    Fallback accuracy-color tokens.
-    These are only defaults — if the project's theme system (data-theme + :root vars)
-    already defines --acc-brilliant etc. per theme, those win. This just guarantees
-    the component never falls back to a hardcoded hex that ignores the active theme.
-  */
   .page-layout {
     --acc-brilliant: #03aea7;
     --acc-great: #8eae83;
@@ -482,579 +513,147 @@
     overflow: hidden;
   }
 
-  .card-header {
-    text-align: center;
-    flex-shrink: 0;
-  }
+  .card-header { text-align: center; flex-shrink: 0; }
+  .insights-title { font-family: serif; color: #f5f5dc; font-weight: 700; text-transform: uppercase; text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3); letter-spacing: 2px; font-size: clamp(1.5rem, 3vw, 2rem); margin: 0 0 0.4rem; }
+  .insights-subtitle { color: rgba(244, 240, 227, 0.72); font-size: 0.95rem; margin: 0; }
 
-  .insights-title {
-    font-family: serif;
-    color: #f5f5dc;
-    font-weight: 700;
-    text-transform: uppercase;
-    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
-    letter-spacing: 2px;
-    font-size: clamp(1.5rem, 3vw, 2rem);
-    margin: 0 0 0.4rem;
-  }
+  .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; gap: 1rem; color: rgba(244, 240, 227, 0.6); font-size: 1rem; text-align: center; }
+  .panel-empty { display: flex; align-items: center; justify-content: center; text-align: center; color: rgba(244, 240, 227, 0.55); font-size: 0.9rem; background: rgba(0, 0, 0, 0.15); border: 1px dashed rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 2.5rem 1.5rem; max-width: 420px; margin: 0 auto; }
 
-  .insights-subtitle {
-    color: rgba(244, 240, 227, 0.72);
-    font-size: 0.95rem;
-    margin: 0;
-  }
-
-  .empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    flex: 1;
-    gap: 1rem;
-    color: rgba(244, 240, 227, 0.6);
-    font-size: 1rem;
-    text-align: center;
-  }
-
-  .panel-empty {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    color: rgba(244, 240, 227, 0.55);
-    font-size: 0.9rem;
-    background: rgba(0, 0, 0, 0.15);
-    border: 1px dashed rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
-    padding: 2.5rem 1.5rem;
-    max-width: 420px;
-    margin: 0 auto;
-  }
-
-  .loading-spinner {
-    position: relative;
-    width: 56px;
-    height: 56px;
-  }
-
-  .spinner-ring {
-    position: absolute;
-    inset: 0;
-    border-radius: 50%;
-    border: 3px solid transparent;
-    border-top-color: var(--text-highlight);
-    animation: spinRing 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
-  }
-
-  .spinner-ring:nth-child(2) {
-    inset: 7px;
-    border-top-color: #a8d97a;
-    animation-duration: 1.6s;
-    animation-direction: reverse;
-  }
-
-  .spinner-ring:nth-child(3) {
-    inset: 14px;
-    border-top-color: #f4f0e3;
-    animation-duration: 2s;
-  }
-
+  .loading-spinner { position: relative; width: 56px; height: 56px; }
+  .spinner-ring { position: absolute; inset: 0; border-radius: 50%; border: 3px solid transparent; border-top-color: var(--text-highlight); animation: spinRing 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite; }
+  .spinner-ring:nth-child(2) { inset: 7px; border-top-color: #a8d97a; animation-duration: 1.6s; animation-direction: reverse; }
+  .spinner-ring:nth-child(3) { inset: 14px; border-top-color: #f4f0e3; animation-duration: 2s; }
   @keyframes spinRing { to { transform: rotate(360deg); } }
 
-  .dashboard-layout {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-    flex: 1;
-    min-height: 0;
-  }
+  .dashboard-layout { display: flex; flex-direction: column; gap: 1.5rem; flex: 1; min-height: 0; }
 
-  .tab-nav-wrapper {
-    flex-shrink: 0;
-    overflow-x: auto;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-  }
-
+  .tab-nav-wrapper { flex-shrink: 0; overflow-x: auto; scrollbar-width: none; -ms-overflow-style: none; }
   .tab-nav-wrapper::-webkit-scrollbar { display: none; }
-
-  .tab-nav {
-    display: inline-flex;
-    min-width: 100%;
-    gap: 0.5rem;
-    background: rgba(0, 0, 0, 0.2);
-    padding: 0.4rem;
-    border-radius: 12px;
-  }
-
-  .tab-btn {
-    padding: 0.6rem 1.2rem;
-    background: transparent;
-    border: none;
-    color: rgba(244, 240, 227, 0.6);
-    font-weight: 600;
-    font-size: 0.9rem;
-    cursor: pointer;
-    border-radius: 8px;
-    transition: all 0.2s ease;
-    white-space: nowrap;
-  }
-
+  .tab-nav { display: inline-flex; min-width: 100%; gap: 0.5rem; background: rgba(0, 0, 0, 0.2); padding: 0.4rem; border-radius: 12px; }
+  .tab-btn { padding: 0.6rem 1.2rem; background: transparent; border: none; color: rgba(244, 240, 227, 0.6); font-weight: 600; font-size: 0.9rem; cursor: pointer; border-radius: 8px; transition: all 0.2s ease; white-space: nowrap; }
   .tab-btn:hover { color: #f4f0e3; }
+  .tab-btn:focus-visible { outline: 2px solid var(--text-highlight, #f4f0e3); outline-offset: 2px; }
+  .tab-btn.active { background: var(--btn-active); color: #f5f5dc; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35); }
 
-  .tab-btn:focus-visible {
-    outline: 2px solid var(--text-highlight, #f4f0e3);
-    outline-offset: 2px;
-  }
-
-  .tab-btn.active {
-    background: var(--btn-active);
-    color: #f5f5dc;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
-  }
-
-  .tab-content-area {
-    flex: 1;
-    overflow-y: auto;
-    padding-right: 0.5rem;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(194, 197, 170, 0.4) transparent;
-  }
-
-  .tab-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-    animation: fadeIn 0.3s ease;
-    max-width: 760px;
-    margin: 0 auto;
-    width: 100%;
-    transition: opacity 0.15s ease;
-  }
-
+  .tab-content-area { flex: 1; overflow-y: auto; padding-right: 0.5rem; scrollbar-width: thin; scrollbar-color: rgba(194, 197, 170, 0.4) transparent; }
+  .tab-panel { display: flex; flex-direction: column; gap: 1.5rem; animation: fadeIn 0.3s ease; max-width: 760px; margin: 0 auto; width: 100%; transition: opacity 0.15s ease; }
   .tab-panel.is-switching { opacity: 0.4; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(5px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-
-  .hero-card {
-    display: flex;
-    background: rgba(0,0,0,0.25);
-    border-radius: 16px;
-    padding: 1.5rem;
-    gap: 1.5rem;
-    align-items: center;
-    justify-content: space-between;
-    border: 1px solid rgba(255,255,255,0.05);
-  }
-
-  .hero-main {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .hero-acc-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
+  /* Hero Card */
+  .hero-card { display: flex; background: rgba(0,0,0,0.25); border-radius: 16px; padding: 1.5rem; gap: 1.5rem; align-items: center; justify-content: space-between; border: 1px solid rgba(255,255,255,0.05); }
+  .hero-main { display: flex; flex-direction: column; gap: 0.5rem; }
+  .hero-acc-row { display: flex; align-items: center; gap: 0.5rem; }
   .hero-icon { width: 36px; height: 36px; }
-
-  .hero-value {
-    font-family: "JetBrains Mono", monospace;
-    font-size: 2.4rem;
-    font-weight: 700;
-  }
-
-  .hero-divider {
-    width: 1px;
-    height: 60px;
-    background: rgba(255,255,255,0.1);
-  }
-
+  .hero-value { font-family: "JetBrains Mono", monospace; font-size: 2.4rem; font-weight: 700; }
+  .hero-divider { width: 1px; height: 60px; background: rgba(255,255,255,0.1); }
   .hero-secondary { display: flex; gap: 2rem; }
-
-  .hero-stat {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    text-align: center;
-  }
-
-  .hero-sub-value {
-    font-family: "JetBrains Mono", monospace;
-    font-size: 1.4rem;
-    font-weight: 700;
-    color: #f5f5dc;
-  }
-
-  .trend-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    padding: 0.25rem 0.6rem;
-    border-radius: 999px;
-    background: rgba(0, 0, 0, 0.25);
-    width: fit-content;
-  }
-
+  .hero-stat { display: flex; flex-direction: column; gap: 0.25rem; text-align: center; }
+  .hero-sub-value { font-family: "JetBrains Mono", monospace; font-size: 1.4rem; font-weight: 700; color: #f5f5dc; }
+  .trend-pill { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.75rem; font-weight: 600; padding: 0.25rem 0.6rem; border-radius: 999px; background: rgba(0, 0, 0, 0.25); width: fit-content; }
   .trend-pill.up { color: #8fd97a; }
   .trend-pill.down { color: #ff8a80; }
   .trend-pill.flat { color: rgba(244, 240, 227, 0.6); }
+  .stat-label { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: rgba(244, 240, 227, 0.6); }
 
-  .stat-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: rgba(244, 240, 227, 0.6);
-  }
-
-  .phase-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-  }
-
-  .phase-box {
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 12px;
-    padding: 1.5rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .phase-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .phase-name {
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: rgba(244, 240, 227, 0.9);
-    text-transform: capitalize;
-  }
-
+  /* Phase Cards */
+  .phase-grid { display: flex; flex-direction: column; gap: 1.5rem; }
+  .phase-box { background: rgba(0, 0, 0, 0.2); border-radius: 12px; padding: 0.5rem; display: flex; flex-direction: column; gap: 0.75rem; }
+  .phase-header { display: flex; justify-content: space-between; align-items: center; }
+  .phase-name { font-size: 1.1rem; font-weight: 600; color: rgba(244, 240, 227, 0.9); text-transform: capitalize; }
   .phase-icon-img { width: 32px; height: 32px; }
-
-  .phase-bar-container {
-    height: 12px;
-    background: rgba(0, 0, 0, 0.4);
-    border-radius: 6px;
-    overflow: hidden;
-  }
-
-  .phase-bar {
-    height: 100%;
-    border-radius: 6px;
-    transition: width 0.5s ease;
-    box-shadow: 0 0 8px rgba(255,255,255,0.1);
-  }
-
-  .phase-bar-empty {
-    height: 100%;
-    width: 100%;
-    background: repeating-linear-gradient(
-      45deg,
-      rgba(255,255,255,0.03),
-      rgba(255,255,255,0.03) 6px,
-      transparent 6px,
-      transparent 12px
-    );
-  }
-
-  .phase-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-  }
-
+  .phase-bar-container { height: 12px; background: rgba(0, 0, 0, 0.4); border-radius: 6px; overflow: hidden; }
+  .phase-bar { height: 100%; border-radius: 6px; transition: width 0.5s ease; box-shadow: 0 0 8px rgba(255,255,255,0.1); }
+  .phase-bar-empty { height: 100%; width: 100%; background: repeating-linear-gradient(45deg, rgba(255,255,255,0.03), rgba(255,255,255,0.03) 6px, transparent 6px, transparent 12px); }
+  .phase-footer { display: flex; justify-content: space-between; align-items: baseline; }
   .phase-n { font-size: 0.75rem; color: rgba(244, 240, 227, 0.5); }
+  .phase-val { font-family: "JetBrains Mono", monospace; font-size: 1.4rem; font-weight: 700; }
 
-  .phase-val {
-    font-family: "JetBrains Mono", monospace;
-    font-size: 1.4rem;
-    font-weight: 700;
-  }
-
-  .openings-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .opening-row {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 1rem 1.5rem;
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 10px;
-    border: 1px solid transparent;
-    transition: border-color 0.2s;
-  }
-
+  /* Openings */
+  .openings-list { display: flex; flex-direction: column; gap: 0.75rem; }
+  .opening-row { display: flex; align-items: center; gap: 1rem; padding: 1rem 1.5rem; background: rgba(0, 0, 0, 0.2); border-radius: 10px; border: 1px solid transparent; transition: border-color 0.2s; }
   .opening-row:hover { border-color: rgba(255, 255, 255, 0.1); }
-
-  .opening-rank {
-    font-family: "JetBrains Mono", monospace;
-    font-weight: 700;
-    color: rgba(244, 240, 227, 0.4);
-    font-size: 0.9rem;
-    width: 30px;
-  }
-
-  .opening-name {
-    flex: 1;
-    font-weight: 600;
-    color: #f5f5dc;
-    font-size: 0.95rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .opening-games {
-    font-family: "JetBrains Mono", monospace;
-    color: rgba(244, 240, 227, 0.5);
-    font-size: 0.85rem;
-  }
-
-  .opening-acc-container {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    background: rgba(255,255,255,0.05);
-    padding: 0.3rem 0.6rem;
-    border-radius: 8px;
-  }
-
+  .opening-rank { font-family: "JetBrains Mono", monospace; font-weight: 700; color: rgba(244, 240, 227, 0.4); font-size: 0.9rem; width: 30px; }
+  .opening-name { flex: 1; font-weight: 600; color: #f5f5dc; font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .opening-games { font-family: "JetBrains Mono", monospace; color: rgba(244, 240, 227, 0.5); font-size: 0.85rem; }
+  .opening-acc-container { display: flex; align-items: center; gap: 0.4rem; background: rgba(255,255,255,0.05); padding: 0.3rem 0.6rem; border-radius: 8px; }
   .opening-acc-icon { width: 20px; height: 20px; }
+  .opening-acc { font-family: "JetBrains Mono", monospace; font-size: 0.9rem; font-weight: 700; }
 
-  .opening-acc {
-    font-family: "JetBrains Mono", monospace;
-    font-size: 0.9rem;
-    font-weight: 700;
-  }
-
-  .heatmap-panel {
+  /* Heatmaps */
+  .heatmap-panel { display: flex; flex-direction: column; align-items: center; gap: 1rem; }
+  
+  .heatmap-boards-container {
     display: flex;
-    flex-direction: column;
-    align-items: center;
-  }
-
-  .heatmap-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
+    gap: 2rem;
     width: 100%;
-    max-width: 500px;
-  }
-
-  .section-subtitle {
-    font-family: serif;
-    color: #f5f5dc;
-    font-size: 1.1rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin: 0;
-  }
-
-  .heatmap-total {
-    font-size: 0.8rem;
-    color: rgba(244,240,227,0.5);
-    font-family: "JetBrains Mono", monospace;
-  }
-
-  .heatmap-board-wrapper {
-    width: 100%;
-    max-width: 500px;
-    display: flex;
     justify-content: center;
+    flex-wrap: wrap;
   }
 
-  .heatmap-board {
-    display: flex;
-    gap: 8px;
-    width: 100%;
-    aspect-ratio: 1/1;
-  }
-
-  .heatmap-rank-labels {
-    display: flex;
-    flex-direction: column;
-    justify-content: space-around;
-    width: 12px;
-    color: rgba(244,240,227,0.4);
-    font-size: 0.8rem;
-    font-family: "JetBrains Mono", monospace;
-  }
-
-  .heatmap-grid-area {
+  .heatmap-instance {
     flex: 1;
+    min-width: 250px;
+    max-width: 400px;
     display: flex;
     flex-direction: column;
+    gap: 0.5rem;
   }
 
+  .heatmap-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+  .section-subtitle { font-family: serif; color: #f5f5dc; font-size: 1rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin: 0; text-align: center; width: 100%; }
+  .section-subtitle.bad-color { color: var(--acc-blunder, #FF0000); }
+  .section-subtitle.good-color { color: var(--acc-best, #6ad13f); }
+  
+  .heatmap-total { font-size: 0.75rem; color: rgba(244,240,227,0.5); font-family: "JetBrains Mono", monospace; text-align: center; width: 100%; }
+  .heatmap-board-wrapper { width: 100%; display: flex; justify-content: center; }
+  .heatmap-board { display: flex; gap: 8px; width: 100%; aspect-ratio: 1/1; }
+  .heatmap-rank-labels { display: flex; flex-direction: column; justify-content: space-around; width: 12px; color: rgba(244,240,227,0.4); font-size: 0.8rem; font-family: "JetBrains Mono", monospace; }
+  .heatmap-grid-area { flex: 1; display: flex; flex-direction: column; }
   .heatmap-row { display: flex; flex: 1; }
+  .heatmap-square { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 0.9rem; font-weight: 800; color: #fff; transition: all 0.2s; cursor: pointer; position: relative; border: none; padding: 0; margin: 0; font-family: inherit; }
+  
+  .heatmap-square.light { background: var(--board-light); }
+  .heatmap-square.dark { background: var(--board-dark); }
 
-  .heatmap-square {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1rem;
-    font-weight: 800;
-    color: #fff;
-    transition: all 0.2s;
-    cursor: pointer;
-    position: relative;
-    border: none;
-    padding: 0;
-    margin: 0;
-    font-family: inherit;
-  }
-
-  .heatmap-square.light {
-    background: var(--board-light);
-  }
-
-  .heatmap-square.dark {
-    background: var(--board-dark);
-  }
-
-  .heatmap-square.active {
+  .heatmap-square.bad.active {
     background: color-mix(in srgb, var(--acc-blunder, #ff2828) calc(var(--intensity) * 60%), var(--board-dark));
     box-shadow: inset 0 0 15px color-mix(in srgb, var(--acc-blunder, red) calc(var(--intensity) * 80%), transparent);
     animation: pulseGlow 2s infinite alternate;
   }
+  .heatmap-square.bad.light.active { background: color-mix(in srgb, var(--acc-blunder, #ff2828) calc(var(--intensity) * 60%), var(--board-light)); }
 
-  .heatmap-square.light.active {
-    background: color-mix(in srgb, var(--acc-blunder, #ff2828) calc(var(--intensity) * 60%), var(--board-light));
+  .heatmap-square.good.active {
+    background: color-mix(in srgb, var(--acc-best, #6ad13f) calc(var(--intensity) * 60%), var(--board-dark));
+    box-shadow: inset 0 0 15px color-mix(in srgb, var(--acc-best, green) calc(var(--intensity) * 80%), transparent);
+    animation: pulseGlow 2s infinite alternate;
   }
+  .heatmap-square.good.light.active { background: color-mix(in srgb, var(--acc-best, #6ad13f) calc(var(--intensity) * 60%), var(--board-light)); }
 
-  @keyframes pulseGlow {
-    from { filter: brightness(0.95); }
-    to { filter: brightness(1.15); }
-  }
-
-  .heatmap-square:hover,
-  .heatmap-square:focus-visible {
-    outline: 2px solid #fff;
-    outline-offset: -2px;
-    z-index: 2;
-    transform: scale(1.05);
-  }
-
-  .heatmap-square:focus-visible {
-    outline-color: var(--text-highlight, #fff);
-  }
-
-  .heatmap-square.selected {
-    outline: 2px solid var(--text-highlight, #fff);
-    outline-offset: -2px;
-    z-index: 2;
-  }
-
+  @keyframes pulseGlow { from { filter: brightness(0.95); } to { filter: brightness(1.15); } }
+  .heatmap-square:hover, .heatmap-square:focus-visible { outline: 2px solid #fff; outline-offset: -2px; z-index: 2; transform: scale(1.05); }
+  .heatmap-square:focus-visible { outline-color: var(--text-highlight, #fff); }
+  .heatmap-square.selected { outline: 2px solid var(--text-highlight, #fff); outline-offset: -2px; z-index: 2; }
   .sq-count { text-shadow: 0 1px 4px rgba(0,0,0,0.8); z-index: 1; }
-
-  .heatmap-file-labels {
-    display: flex;
-    justify-content: space-around;
-    height: 12px;
-    margin-top: 4px;
-    color: rgba(244,240,227,0.4);
-    font-size: 0.8rem;
-    font-family: "JetBrains Mono", monospace;
-  }
-
-  .heatmap-selected-readout {
-    text-align: center;
-    font-size: 0.85rem;
-    color: rgba(244, 240, 227, 0.5);
-    margin: 1rem 0 0;
-    min-height: 1.2em;
-  }
-
+  .heatmap-file-labels { display: flex; justify-content: space-around; height: 12px; margin-top: 4px; color: rgba(244,240,227,0.4); font-size: 0.8rem; font-family: "JetBrains Mono", monospace; }
+  
+  .heatmap-selected-readout { text-align: center; font-size: 0.85rem; color: rgba(244, 240, 227, 0.5); margin: 0.5rem 0 0; min-height: 1.2em; }
   .heatmap-selected-readout.visible { color: #f5f5dc; }
+  .heatmap-selected-readout strong { font-family: "JetBrains Mono", monospace; color: var(--text-highlight, #f5f5dc); }
+  .heatmap-info { text-align: center; font-size: 0.85rem; color: rgba(244, 240, 227, 0.5); margin-top: 0.5rem; max-width: 400px; }
 
-  .heatmap-selected-readout strong {
-    font-family: "JetBrains Mono", monospace;
-    color: var(--text-highlight, #f5f5dc);
-  }
-
-  .heatmap-info {
-    text-align: center;
-    font-size: 0.85rem;
-    color: rgba(244, 240, 227, 0.5);
-    margin-top: 0.5rem;
-    max-width: 400px;
-  }
-
-  .move-bar-container {
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 12px;
-    padding: 1rem;
-  }
-
-  .move-bar {
-    display: flex;
-    width: 100%;
-    height: 1.8rem;
-    border-radius: 8px;
-    overflow: hidden;
-    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
-  }
-
+  /* Move Classes */
+  .move-bar-container { background: rgba(0, 0, 0, 0.2); border-radius: 12px; padding: 1rem; }
+  .move-bar { display: flex; width: 100%; height: 1.8rem; border-radius: 8px; overflow: hidden; box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35); }
   .move-bar-segment { height: 100%; transition: width 0.5s ease; }
-
-  .move-classes-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 1rem;
-  }
-
-  .move-class-box {
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 12px;
-    padding: 1.5rem 1rem;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.35rem;
-    transition: transform 0.2s;
-  }
-
+  .move-classes-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; }
+  .move-class-box { background: rgba(0, 0, 0, 0.2); border-radius: 12px; padding: 1.5rem 1rem; display: flex; flex-direction: column; align-items: center; gap: 0.35rem; transition: transform 0.2s; }
   .move-class-box:hover { transform: translateY(-2px); }
-
   .mc-icon-img { width: 36px; height: 36px; }
-
   .mc-label { font-size: 0.8rem; font-weight: 600; }
-
-  .mc-count {
-    font-family: "JetBrains Mono", monospace;
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: #f5f5dc;
-    margin-top: 0.15rem;
-  }
-
-  .mc-percent {
-    font-family: "JetBrains Mono", monospace;
-    font-size: 0.72rem;
-    color: rgba(244, 240, 227, 0.5);
-  }
+  .mc-count { font-family: "JetBrains Mono", monospace; font-size: 1.5rem; font-weight: 700; color: #f5f5dc; margin-top: 0.15rem; }
+  .mc-percent { font-family: "JetBrains Mono", monospace; font-size: 0.72rem; color: rgba(244, 240, 227, 0.5); }
 
   @media (max-width: 600px) {
     .hero-card { flex-direction: column; gap: 1rem; }
