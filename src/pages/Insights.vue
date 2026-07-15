@@ -48,11 +48,12 @@
   function getAccuracyMeta(acc) {
     if (acc === null || acc === undefined) return { label: 'N/A', icon: null, color: '#666' }
     if (acc >= 95) return { label: 'Brilliant', icon: '/moveClassifications/brilliant.png', color: '#03aea7' }
-    if (acc >= 90) return { label: 'Good', icon: '/moveClassifications/good.png', color: '#8eae83' }
+    if (acc >= 90) return { label: 'Great', icon: '/moveClassifications/great.png', color: '#8eae83' }
     if (acc >= 80) return { label: 'Best', icon: '/moveClassifications/best.png', color: '#6ad13f' }
     if (acc >= 70) return { label: 'Excellent', icon: '/moveClassifications/excellent.png', color: '#90bc36' }
-    if (acc >= 60) return { label: 'Inaccuracy', icon: '/moveClassifications/inaccuracy.png', color: '#f2bc43' }
-    if (acc >= 50) return { label: 'Mistake', icon: '/moveClassifications/mistake.png', color: '#f38800' }
+    if (acc >= 60) return { label: 'Good', icon: '/moveClassifications/good.png', color: '#f2bc43' }
+    if (acc >= 50) return { label: 'Inaccuracy', icon: '/moveClassifications/inaccuracy.png', color: '#f2bc43' }
+    if (acc >= 40) return { label: 'Mistake', icon: '/moveClassifications/mistake.png', color: '#f38800' }
     return { label: 'Blunder', icon: '/moveClassifications/blunder.png', color: '#FF0000' }
   }
 
