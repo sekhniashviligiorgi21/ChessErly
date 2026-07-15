@@ -221,7 +221,6 @@
           <div class="tab-nav-wrapper">
             <div class="tab-nav">
               <button class="tab-btn" :class="{ active: activeTab === 'overview' }" @click="setTab('overview')">Overview</button>
-              <button class="tab-btn" :class="{ active: activeTab === 'phases' }" @click="setTab('phases')">Phases</button>
               <button class="tab-btn" :class="{ active: activeTab === 'openings' }" @click="setTab('openings')">Openings</button>
               <button class="tab-btn" :class="{ active: activeTab === 'heatmap' }" @click="setTab('heatmap')">Heatmap</button>
               <button class="tab-btn" :class="{ active: activeTab === 'moves' }" @click="setTab('moves')">Move Classes</button>
@@ -256,30 +255,13 @@
                     <span class="hero-sub-value">{{ totalMoves }}</span>
                   </div>
                   <div class="hero-stat">
-                    <span class="stat-label">Blunders/Mistakes</span>
+                    <span class="stat-label">Blunders</span>
                     <span class="hero-sub-value" style="color: #ff8a80;">{{ moveCounts.blunder + moveCounts.mistake }}</span>
                   </div>
                 </div>
               </div>
 
-              <div class="quick-glance-phases">
-                <div class="mini-phase">
-                  <span>Opening</span>
-                  <strong :style="{color: phaseAccuracy.opening.meta.color}">{{ phaseAccuracy.opening.val ? phaseAccuracy.opening.val + '%' : '—' }}</strong>
-                </div>
-                <div class="mini-phase">
-                  <span>Middlegame</span>
-                  <strong :style="{color: phaseAccuracy.middlegame.meta.color}">{{ phaseAccuracy.middlegame.val ? phaseAccuracy.middlegame.val + '%' : '—' }}</strong>
-                </div>
-                <div class="mini-phase">
-                  <span>Endgame</span>
-                  <strong :style="{color: phaseAccuracy.endgame.meta.color}">{{ phaseAccuracy.endgame.val ? phaseAccuracy.endgame.val + '%' : '—' }}</strong>
-                </div>
-              </div>
-            </div>
-
-            <!-- PHASES TAB -->
-            <div v-if="activeTab === 'phases'" class="tab-panel">
+              <!-- Moved Phase Accuracy Charts Here -->
               <div class="phase-grid">
                 <div class="phase-box" v-for="(phase, key) in phaseAccuracy" :key="key">
                   <div class="phase-header">
@@ -555,7 +537,7 @@
     to { opacity: 1; transform: translateY(0); } 
   }
 
-  /* Hero Card (No Sparkline) */
+  /* Hero Card */
   .hero-card { 
     display: flex; 
     background: rgba(0,0,0,0.25); 
@@ -663,34 +645,7 @@
     color: #f5f5dc; 
   }
 
-  .quick-glance-phases { 
-    display: grid; 
-    grid-template-columns: repeat(3, 1fr); 
-    gap: 1rem; 
-  }
-
-  .mini-phase { 
-    background: rgba(0,0,0,0.2); 
-    padding: 1rem; 
-    border-radius: 10px; 
-    display: flex; 
-    flex-direction: column; 
-    align-items: center; 
-    gap: 0.25rem; 
-  }
-
-  .mini-phase span { 
-    font-size: 0.75rem; 
-    color: rgba(244,240,227,0.6); 
-    text-transform: uppercase; 
-  }
-
-  .mini-phase strong { 
-    font-size: 1.1rem; 
-    font-family: "JetBrains Mono", monospace; 
-  }
-
-  /* Phases Tab */
+  /* Phase Accuracy Charts (Moved to Overview) */
   .phase-grid { 
     display: flex; 
     flex-direction: column; 
