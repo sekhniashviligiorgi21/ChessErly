@@ -424,7 +424,7 @@
     grid-template-columns: 1fr;
     gap: 1.25rem;
     justify-self: center;
-    max-width: 100%; /* Expanded from 1400px */
+    min-width: 100%; 
     margin: 0 auto;
     box-sizing: border-box;
   }
