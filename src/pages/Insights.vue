@@ -233,7 +233,7 @@
     grid-template-columns: 1fr;
     gap: 1.25rem;
     justify-self: center;
-    max-width: 1400px;
+    max-width: 100%; /* Expanded */
     margin: 0 auto;
     box-sizing: border-box;
   }
@@ -258,7 +258,7 @@
     gap: 2rem;
     padding: clamp(1.5rem, 3vw, 2.5rem);
     width: 100%;
-    max-width: 100%;
+    max-width: 100%; /* Expanded */
     box-sizing: border-box;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 18px;
