@@ -5,7 +5,6 @@
   import { onAuthStateChanged } from 'firebase/auth'
   import { collection, query, orderBy, getDocs } from 'firebase/firestore'
 
-  // --- Apply theme instantly ---
   const currentTheme = ref(localStorage.getItem('chesslab_theme') || 'brown')
   watch(currentTheme, (newTheme) => {
     document.documentElement.setAttribute('data-theme', newTheme)
@@ -35,6 +34,417 @@
     try {
       const q = query(
         collection(db, `users/${currentUser.value.uid}/games`),
+        orderBy('createdAt', 'desc')
+      )
+      const querySnapshot = await getDocs(q)
+      insights.value = querySnapshot.docs
+        .map(doc => doc.data())
+        .filter(game => game.insights && game.insights.overallAccuracy !== null)
+    } catch (e) {
+      console.error("Failed to load insights:", e)
+    }
+  }
+
+  function getAccuracyMeta(acc) {
+    if (acc === null || acc === undefined) return { label: 'N/A', icon: null, color: '#666' }
+    if (acc >= 95) return { label: 'Brilliant', icon: '/moveClassifications/brilliant.png', color: '#03aea7' }
+    if (acc >= 90) return { label: 'Great', icon: '/moveClassifications/great.png', color: '#8eae83' }
+    if (acc >= 80) return { label: 'Best', icon: '/moveClassifications/best.png', color: '#6ad13f' }
+    if (acc >= 70) return { label: 'Excellent', icon: '/moveClassifications/excellent.png', color: '#90bc36' }
+    if (acc >= 60) return { label: 'Good', icon: '/moveClassifications/good.png', color: '#f2bc43' }
+    if (acc >= 50) return { label: 'Inaccuracy', icon: '/moveClassifications/inaccuracy.png', color: '#f2bc43' }
+    if (acc >= 40) return { label: 'Mistake', icon: '/moveClassifications/mistake.png', color: '#f38800' }
+    return { label: 'Blunder', icon: '/moveClassifications/blunder.png', color: '#FF0000' }
+  }
+
+  const totalGames = computed(() => insights.value.length)
+  const totalMoves = computed(() => insights.value.reduce((sum, game) => sum + (game.insights?.totalMoves || 0), 0))
+
+  const overallAccuracy = computed(() => {
+    const gamesWithAcc = insights.value.filter(g => g.insights?.overallAccuracy !== null)
+    if (gamesWithAcc.length === 0) return null
+    const sum = gamesWithAcc.reduce((acc, g) => acc + g.insights.overallAccuracy, 0)
+    return (sum / gamesWithAcc.length).toFixed(1)
+  })
+
+  const overallMeta = computed(() => getAccuracyMeta(overallAccuracy.value ? parseFloat(overallAccuracy.value) : null))
+
+  const colorPerformance = computed(() => {
+    const colors = { 
+      white: { games: 0, win: 0, loss: 0, draw: 0, accs: [], blunders: 0 }, 
+      black: { games: 0, win: 0, loss: 0, draw: 0, accs: [], blunders: 0 } 
+    }
+    insights.value.forEach(g => {
+      const c = g.insights?.myColor
+      if (!c || !colors[c]) return
+      colors[c].games++
+      colors[c].accs.push(g.insights.overallAccuracy || 0)
+      colors[c].blunders += (g.insights.moveCounts?.blunder || 0) + (g.insights.moveCounts?.mistake || 0)
+      
+      const myRes = c === 'white' ? g.white?.result : g.black?.result
+      if (myRes === 'win') colors[c].win++
+      else if (['lose', 'checkmated', 'resigned', 'abandoned'].includes(myRes)) colors[c].loss++
+      else colors[c].draw++
+    })
+
+    const calcAcc = (arr) => arr.length ? (arr.reduce((a,b) => a+b, 0) / arr.length).toFixed(1) : null
+
+    return {
+      white: { ...colors.white, avgAcc: calcAcc(colors.white.accs) },
+      black: { ...colors.black, avgAcc: calcAcc(colors.black.accs) }
+    }
+  })
+
+  const pieceMeta = [
+    { key: 'p', label: 'Pawn', symbol: '♟', color: '#cccccc' },
+    { key: 'n', label: 'Knight', symbol: '♞', color: '#a8d97a' },
+    { key: 'b', label: 'Bishop', symbol: '♝', color: '#7ec8e3' },
+    { key: 'r', label: 'Rook', symbol: '♜', color: '#f0d0a3' },
+    { key: 'q', label: 'Queen', symbol: '♛', color: '#d9b382' },
+    { key: 'k', label: 'King', symbol: '♚', color: '#f5f5dc' },
+  ]
+
+  const pieceStats = computed(() => {
+    const totals = { p: {count:0, sum:0}, n: {count:0, sum:0}, b: {count:0, sum:0}, r: {count:0, sum:0}, q: {count:0, sum:0}, k: {count:0, sum:0} }
+    insights.value.forEach(g => {
+      if (g.insights?.pieceStats) {
+        for (const key in totals) {
+          totals[key].count += g.insights.pieceStats[key]?.count || 0
+          totals[key].sum += g.insights.pieceStats[key]?.sum || 0
+        }
+      }
+    })
+    return totals
+  })
+
+  const totalPieceMoves = computed(() => Object.values(pieceStats.value).reduce((a,b) => a + b.count, 0))
+
+  const pieceData = computed(() => {
+    return pieceMeta.map(p => {
+      const stats = pieceStats.value[p.key]
+      const avgAcc = stats.count > 0 ? (stats.sum / stats.count).toFixed(1) : null
+      const movePercent = totalPieceMoves.value > 0 ? ((stats.count / totalPieceMoves.value) * 100).toFixed(1) : 0
+      return {
+        ...p,
+        count: stats.count,
+        avgAcc: avgAcc ? parseFloat(avgAcc) : null,
+        meta: avgAcc ? getAccuracyMeta(parseFloat(avgAcc)) : getAccuracyMeta(null),
+        movePercent
+      }
+    })
+  })
+
+  const gameLengthStats = computed(() => {
+    const buckets = {
+      short: { label: 'Short (<20)', games: 0, win: 0, loss: 0, draw: 0, accs: [], blunders: 0 },
+      medium: { label: 'Medium (20-40)', games: 0, win: 0, loss: 0, draw: 0, accs: [], blunders: 0 },
+      long: { label: 'Long (40+)', games: 0, win: 0, loss: 0, draw: 0, accs: [], blunders: 0 }
+    }
+    insights.value.forEach(g => {
+      const moves = g.insights?.totalMoves || 0
+      const c = g.insights?.myColor
+      if (!c) return
+      const bucket = moves < 20 ? 'short' : moves <= 40 ? 'medium' : 'long'
+      buckets[bucket].games++
+      buckets[bucket].accs.push(g.insights.overallAccuracy || 0)
+      buckets[bucket].blunders += (g.insights.moveCounts?.blunder || 0) + (g.insights.moveCounts?.mistake || 0)
+      
+      const myRes = c === 'white' ? g.white?.result : g.black?.result
+      if (myRes === 'win') buckets[bucket].win++
+      else if (['lose', 'checkmated', 'resigned', 'abandoned'].includes(myRes)) buckets[bucket].loss++
+      else buckets[bucket].draw++
+    })
+    return Object.values(buckets).map(b => ({
+      ...b,
+      avgAcc: b.accs.length ? (b.accs.reduce((a,b) => a+b, 0) / b.accs.length).toFixed(1) : null
+    }))
+  })
+
+  const playstyleData = computed(() => {
+    const totals = { earlyTrades: 0, evalSwings: 0, brilliantMoves: 0, endgameAcc: 0, openingAcc: 0, games: 0 }
+    insights.value.forEach(g => {
+      if (g.insights?.playstyle) {
+        totals.earlyTrades += g.insights.playstyle.earlyTrades || 0
+        totals.evalSwings += g.insights.playstyle.evalSwings || 0
+        totals.brilliantMoves += g.insights.playstyle.brilliantMoves || 0
+        totals.endgameAcc += g.insights.playstyle.endgameAcc || 0
+        totals.openingAcc += g.insights.playstyle.openingAcc || 0
+        totals.games++
+      }
+    })
+    if (totals.games === 0) return null
+
+    const avgEarlyTrades = totals.earlyTrades / totals.games
+    const avgEvalSwings = totals.evalSwings / totals.games
+    const avgBrilliant = totals.brilliantMoves / totals.games
+    const avgEndgameAcc = totals.endgameAcc / totals.games
+    const avgOpeningAcc = totals.openingAcc / totals.games
+
+    const traderScore = Math.min(100, (avgEarlyTrades / 4) * 100)
+    const tacticianScore = Math.min(100, ((avgEvalSwings / 8) + (avgBrilliant / 2)) * 50)
+    const aggressiveScore = Math.min(100, ((avgBrilliant / 2) + (avgEvalSwings / 10)) * 50)
+    const defensiveScore = Math.min(100, avgOpeningAcc)
+    const endgameScore = Math.min(100, avgEndgameAcc)
+
+    return [
+      { axis: 'Aggressive', value: aggressiveScore },
+      { axis: 'Defensive', value: defensiveScore },
+      { axis: 'Trader', value: traderScore },
+      { axis: 'Endgame', value: endgameScore },
+      { axis: 'Tactician', value: tacticianScore }
+    ]
+  })
+
+  const playstyleSummary = computed(() => {
+    if (!playstyleData.value) return null
+    const sorted = [...playstyleData.value].sort((a, b) => b.value - a.value)
+    const top = sorted[0]
+    const summaries = {
+      Aggressive: "You play aggressively, seeking tactical complications and not afraid of sacrifices.",
+      Defensive: "You play solid, accurate chess in the opening, preferring safe and stable positions.",
+      Trader: "You tend to trade pieces early in the opening, simplifying the position to your advantage.",
+      Endgame: "You excel in the endgame, displaying high accuracy when the board opens up.",
+      Tactician: "You thrive in chaotic, complex positions with wild evaluation swings."
+    }
+    return summaries[top.axis]
+  })
+
+  const radarPoints = computed(() => {
+    if (!playstyleData.value) return ""
+    const center = 100, radius = 80
+    return playstyleData.value.map((d, i) => {
+      const angle = (i * 72 - 90) * Math.PI / 180
+      const x = center + (d.value / 100) * radius * Math.cos(angle)
+      const y = center + (d.value / 100) * radius * Math.sin(angle)
+      return `${x},${y}`
+    }).join(' ')
+  })
+
+  const radarGrid = computed(() => {
+    const center = 100, radius = 80
+    const levels = [0.25, 0.5, 0.75, 1.0]
+    return levels.map(level => {
+      return Array.from({length: 5}).map((_, i) => {
+        const angle = (i * 72 - 90) * Math.PI / 180
+        const x = center + level * radius * Math.cos(angle)
+        const y = center + level * radius * Math.sin(angle)
+        return `${x},${y}`
+      }).join(' ')
+    })
+  })
+
+  const radarLabels = computed(() => {
+    if (!playstyleData.value) return []
+    const center = 100, radius = 95
+    return playstyleData.value.map((d, i) => {
+      const angle = (i * 72 - 90) * Math.PI / 180
+      const x = center + radius * Math.cos(angle)
+      const y = center + radius * Math.sin(angle)
+      return { x, y, label: d.axis, value: d.value.toFixed(0) }
+    })
+  })
+
+  const RECENT_WINDOW = 5
+  const trend = computed(() => {
+    const withAcc = insights.value.filter(g => g.insights?.overallAccuracy !== null)
+    if (withAcc.length < 4) return null
+    const recent = withAcc.slice(0, RECENT_WINDOW)
+    const older = withAcc.slice(RECENT_WINDOW)
+    if (older.length === 0) return null
+
+    const avg = (arr) => arr.reduce((a, g) => a + g.insights.overallAccuracy, 0) / arr.length
+    const delta = avg(recent) - avg(older)
+    return {
+      delta: delta.toFixed(1),
+      direction: delta > 0.5 ? 'up' : delta < -0.5 ? 'down' : 'flat'
+    }
+  })
+
+  const phaseAccuracy = computed(() => {
+    const phases = { opening: [], middlegame: [], endgame: [] }
+    insights.value.forEach(g => {
+      if (g.insights?.phaseAccuracy) {
+        if (g.insights.phaseAccuracy.opening !== null) phases.opening.push(g.insights.phaseAccuracy.opening)
+        if (g.insights.phaseAccuracy.middlegame !== null) phases.middlegame.push(g.insights.phaseAccuracy.middlegame)
+        if (g.insights.phaseAccuracy.endgame !== null) phases.endgame.push(g.insights.phaseAccuracy.endgame)
+      }
+    })
+    const calc = (arr) => arr.length ? (arr.reduce((a,b) => a+b, 0) / arr.length).toFixed(1) : null
+    let oAcc = calc(phases.opening), mAcc = calc(phases.middlegame), eAcc = calc(phases.endgame)
+    return {
+      opening: { val: oAcc, meta: getAccuracyMeta(oAcc ? parseFloat(oAcc) : null), n: phases.opening.length },
+      middlegame: { val: mAcc, meta: getAccuracyMeta(mAcc ? parseFloat(mAcc) : null), n: phases.middlegame.length },
+      endgame: { val: eAcc, meta: getAccuracyMeta(eAcc ? parseFloat(eAcc) : null), n: phases.endgame.length }
+    }
+  })
+
+  const moveCounts = computed(() => {
+    const totals = { brilliant: 0, great: 0, best: 0, book: 0, excellent: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0 }
+    insights.value.forEach(g => {
+      if (g.insights?.moveCounts) {
+        for (const key in totals) totals[key] += g.insights.moveCounts[key] || 0
+      }
+    })
+    return totals
+  })
+
+  const avgMoveCounts = computed(() => {
+    const avgs = {}
+    if (totalGames.value === 0) return avgs
+    for (const key in moveCounts.value) {
+      avgs[key] = (moveCounts.value[key] / totalGames.value).toFixed(1)
+    }
+    return avgs
+  })
+
+  const moveCountsTotal = computed(() => Object.values(moveCounts.value).reduce((a, b) => a + b, 0))
+  const classificationOrder = ['brilliant', 'great', 'best', 'book', 'excellent', 'good', 'inaccuracy', 'mistake', 'blunder']
+
+  const moveCountsBarSegments = computed(() => {
+    const total = moveCountsTotal.value
+    if (!total) return []
+    return classificationOrder
+      .map(key => ({ key, count: moveCounts.value[key], percent: (moveCounts.value[key] / total) * 100, meta: classificationMeta[key] }))
+      .filter(seg => seg.count > 0)
+  })
+
+  function generateHeatmapData(type) {
+    const squareKey = type === 'bad' ? 'blunderSquares' : 'goodSquares';
+    const squares = {};
+    let max = 0;
+    insights.value.forEach(g => {
+      if (g.insights?.[squareKey]) {
+        for (const sq in g.insights[squareKey]) {
+          squares[sq] = (squares[sq] || 0) + g.insights[squareKey][sq];
+          if (squares[sq] > max) max = squares[sq];
+        }
+      }
+    });
+    return { squares, max };
+  }
+
+  function generateBoardData(heatmap) {
+    const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+    const ranks = [8, 7, 6, 5, 4, 3, 2, 1];
+    const rows = [];
+    for (const rank of ranks) {
+      const row = [];
+      for (const file of files) {
+        const sq = `${file}${rank}`;
+        const count = heatmap.squares[sq] || 0;
+        const intensity = heatmap.max > 0 ? count / heatmap.max : 0;
+        row.push({ sq, count, intensity });
+      }
+      rows.push(row);
+    }
+    return rows;
+  }
+
+  const badHeatmap = computed(() => generateHeatmapData('bad'));
+  const totalBadMoves = computed(() => Object.values(badHeatmap.value.squares).reduce((a, b) => a + b, 0));
+  const badBoardSquares = computed(() => generateBoardData(badHeatmap.value));
+
+  const goodHeatmap = computed(() => generateHeatmapData('good'));
+  const totalGoodMoves = computed(() => Object.values(goodHeatmap.value.squares).reduce((a, b) => a + b, 0));
+  const goodBoardSquares = computed(() => generateBoardData(goodHeatmap.value));
+
+  const selectedSquare = ref(null)
+  function tapSquare(sq) {
+    selectedSquare.value = selectedSquare.value?.sq === sq.sq ? null : sq
+  }
+
+  const topOpenings = computed(() => {
+    const counts = {}
+    insights.value.forEach(g => {
+      const name = g.insights?.opening && g.insights.opening !== "Unknown Opening" ? g.insights.opening : "Unrecognized Opening"
+      if (!counts[name]) counts[name] = { name, count: 0, accuracy: [] }
+      counts[name].count++
+      if (g.insights?.overallAccuracy !== null) counts[name].accuracy.push(g.insights.overallAccuracy)
+    })
+
+    return Object.values(counts)
+      .map(o => {
+        const avgAccuracy = o.accuracy.length ? (o.accuracy.reduce((a,b) => a+b, 0) / o.accuracy.length) : null
+        return {
+          name: o.name,
+          count: o.count,
+          avgAccuracy: avgAccuracy !== null ? avgAccuracy.toFixed(1) : null,
+          meta: avgAccuracy !== null ? getAccuracyMeta(parseFloat(avgAccuracy.toFixed(1))) : getAccuracyMeta(null)
+        }
+      })
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5)
+  })
+
+  const classificationMeta = {
+    brilliant:  { label: 'Brilliant',  color: '#03aea7', icon: '/moveClassifications/brilliant.png' },
+    great:      { label: 'Great',      color: '#4c8cb5', icon: '/moveClassifications/great.png' },
+    best:       { label: 'Best',       color: '#6ad13f', icon: '/moveClassifications/best.png' },
+    book:       { label: 'Book',       color: '#ad8760', icon: '/moveClassifications/book.png' },
+    excellent:  { label: 'Excellent',  color: '#90bc36', icon: '/moveClassifications/excellent.png' },
+    good:       { label: 'Good',       color: '#8eae83', icon: '/moveClassifications/good.png' },
+    inaccuracy: { label: 'Inaccuracy', color: '#f2bc43', icon: '/moveClassifications/inaccuracy.png' },
+    mistake:    { label: 'Mistake',    color: '#f38800', icon: '/moveClassifications/mistake.png' },
+    blunder:    { label: 'Blunder',    color: '#FF0000', icon: '/moveClassifications/blunder.png' }
+  }
+
+  function setTab(tab) { activeTab.value = tab }
+</script>
+
+<template>
+  <div class="page-layout">
+    <Title />
+    <div class="content-area">
+      <div class="insights-card">
+        <div class="card-header">
+          <h1 class="insights-title">Your Insights</h1>
+          <p class="insights-subtitle">Track your progress, find your weaknesses, and improve your game.</p>
+        </div>
+
+        <div v-if="loading" class="empty-state">
+          <div class="loading-spinner"><div class="spinner-ring"></div><div class="spinner-ring"></div><div class="spinner-ring"></div></div>
+          <p>Crunching the numbers...</p>
+        </div>
+
+        <div v-else-if="!currentUser" class="empty-state"><p>Please log in to view your insights.</p></div>
+        <div v-else-if="insights.length === 0" class="empty-state"><p>No data yet. Analyze a game from your library to start building your insights!</p></div>
+
+        <div v-else class="dashboard-layout">
+          <div class="tab-nav-wrapper">
+            <div class="tab-nav">
+              <button class="tab-btn" :class="{ active: activeTab === 'overview' }" @click="setTab('overview')">Overview</button>
+              <button class="tab-btn" :class="{ active: activeTab === 'playstyle' }" @click="setTab('playstyle')">Playstyle</button>
+              <button class="tab-btn" :class="{ active: activeTab === 'stamina' }" @click="setTab('stamina')">Stamina</button>
+              <button class="tab-btn" :class="{ active: activeTab === 'colors' }" @click="setTab('colors')">Colors</button>
+              <button class="tab-btn" :class="{ active: activeTab === 'pieces' }" @click="setTab('pieces')">Pieces</button>
+              <button class="tab-btn" :class="{ active: activeTab === 'openings' }" @click="setTab('openings')">Openings</button>
+              <button class="tab-btn" :class="{ active: activeTab === 'heatmap' }" @click="setTab('heatmap')">Heatmap</button>
+              <button class="tab-btn" :class="{ active: activeTab === 'moves' }" @click="setTab('moves')">Move Classes</button>
+            </div>
+          </div>
+
+          <div class="tab-content-area">
+            <div class="tab-panel">
+              <!-- OVERVIEW TAB -->
+              <template v-if="activeTab === 'overview'">
+                <div class="hero-card">
+                  <div class="hero-main">
+                    <span class="stat-label">Overall Accuracy</span>
+                    <div class="hero-acc-row">
+                      <img v-if="overallMeta.icon" :src="overallMeta.icon" class="hero-icon" alt="" />
+                      <span class="hero-value" :style="{ color: overallMeta.color }">{{ overallAccuracy !== null ? overallAccuracy + '%' : '—' }}</span>
+                    </div>
+                    <div v-if="trend" class="trend-pill" :class="trend.direction">
+                      <span v-if="trend.direction === 'up'">▲</span>
+                      <span v-else-if="trend.direction === 'down'">▼</span>
+                      <span v-else>◆</span>
+                      {{ Math.abs(trend.delta) }}% vs. earlier games
+                    </div>
+                  </div>
+                  <div class="hero-divider"></div>
+                  <div class="hero-secondary">
+                    <div class="hero-stat">
+            collection(db, `users/${currentUser.value.uid}/games`),
         orderBy('createdAt', 'desc')
       )
       const querySnapshot = await getDocs(q)
