@@ -11,7 +11,6 @@
   import { startEngine, getEvaluation, cancelAnalysis, setOnLichessRateLimited } from "../engine/engine.js"
   import { useRoute, useRouter } from 'vue-router'
 
-
   const currentTheme = ref(localStorage.getItem('chesslab_theme') || 'brown')
 
   watch(currentTheme, (newTheme) => {
@@ -22,7 +21,6 @@
   const activeColor = ref('var(--btn-active)')
   const passiveColor = ref('var(--btn-idle)')
 
-  // Flag gates for preventing startup racing
   let boardReady = false
   let engineReady = false 
 
@@ -48,7 +46,7 @@
     } else {
       await getAccuracy()
     }
-      });
+  });
 
   onBeforeUnmount(() => {
     window.removeEventListener('keydown', handleKeyDown)
@@ -58,9 +56,609 @@
     clearTimeout(longPressTimer)
   })
 
-  // State
   const route = useRoute()
   const router = useRouter()
+  const isSettingsOpen = ref(false)
+  const isFlipped = computed(() => (rotate.value / 180) % 2 === 1)
+
+  const chess = new Chess()
+  const greedyChess = new Chess()
+  const excellentChess = new Chess()
+  const bestChess = new Chess()
+  const thirdChess = new Chess()
+
+  const DEPTH_STORAGE_KEY = 'chesslab_targetDepth'
+  function loadStoredDepth() {
+    const stored = Number(localStorage.getItem(DEPTH_STORAGE_KEY))
+    return stored >= 10 && stored <= 30 ? stored : 10
+  }
+
+  const moveData = shallowRef(null)
+  const boardAPI = shallowRef(null)
+  const isAnalyzing = ref(false)
+  const isImporting = ref(false)
+  const importProgress = ref({ current: 0, total: 0 })
+  let importCancelled = false
+  const currentDepth = ref(10)
+  const targetDepth = ref(loadStoredDepth())
+  const height = ref(47.75)
+  const cp = ref(0)
+  const rotate = ref(0)
+  const isAccuracy = ref("")
+  const color = ref("")
+  const sanLine = ref([])
+  const bestMoveSan = ref('')
+  const excellentSanLine = ref([])
+  const treeVersion = ref(0)
+  const movesListUCI = ref([])
+  const lastMoveSquare = ref(null)
+  const lastMoveAccuracy = ref(null)
+  const boardRef = ref(null)
+  const movesListRef = ref(null)
+  const thirdSanLine = ref([])
+  const soundOn = ref(true)
+  const showBestArrow = ref(true)
+  const bestArrowSquares = ref(null) 
+  const toastMessage = ref('')
+  const activeTab = ref('moves')
+  const explorerTitle = ref(null)
+  const contextMenu = ref({ visible: false, x: 0, y: 0, nodeId: null })
+
+  const whiteName = ref('White')
+  const blackName = ref('Black')
+  const whiteRating = ref(null)
+  const blackRating = ref(null)
+  const hasPlayerInfo = ref(false)
+
+  const LICHESS_TOKEN = import.meta.env.VITE_LICHESS_TOKEN
+  const opening = ref("")
+  const openingEco = ref("")
+  
+  const explorerStats = shallowRef(null)     
+  const explorerMoves = shallowRef([])       
+  
+  const explorerLoading = ref(false)
+  const explorerError = ref("")
+
+  async function importLichessExplorer(){
+    explorerLoading.value = true
+    explorerError.value = ""
+
+    const uciList = movesListUCI.value
+    if (uciList.length > 40) {
+      explorerLoading.value = false
+      return
+    }
+
+    const bookList = uciList.join(",")
+    const url = bookList
+        ? `https://explorer.lichess.ovh/masters?play=${bookList}`
+        : `https://explorer.lichess.ovh/masters`
+
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${LICHESS_TOKEN}`,
+          'Accept': 'application/json'
+        }
+      })
+
+      if (response.status === 204) {
+        opening.value = "No master games at this position"
+        openingEco.value = ""
+        explorerStats.value = null
+        explorerMoves.value = []
+        explorerError.value = ""
+        return
+      }
+
+      if (!response.ok) {
+        explorerError.value = `Explorer error (${response.status})`
+        explorerStats.value = null
+        explorerMoves.value = []
+        return
+      }
+
+      const data = await response.json()
+
+      if (data.opening) {
+          opening.value = data.opening.name
+          openingEco.value = data.opening.eco
+      } else {
+          opening.value = uciList.length === 0 ? "Starting position" : "Out of book"
+          openingEco.value = ""
+      }
+
+      const total = (data.white ?? 0) + (data.draws ?? 0) + (data.black ?? 0)
+      explorerStats.value = total > 0 ? {
+          white: Math.round((data.white / total) * 100),
+          draws: Math.round((data.draws / total) * 100),
+          black: Math.round((data.black / total) * 100),
+          total
+      } : null
+
+      explorerMoves.value = (data.moves ?? [])
+        .map(m => {
+          const moveTotal = (m.white ?? 0) + (m.draws ?? 0) + (m.black ?? 0)
+          return {
+            san: m.san,
+            uci: m.uci,
+            total: moveTotal,
+            percent: total > 0 ? Math.round((moveTotal / total) * 100) : 0,
+            white: moveTotal > 0 ? Math.round((m.white / moveTotal) * 100) : 0,
+            draws: moveTotal > 0 ? Math.round((m.draws / moveTotal) * 100) : 0,
+            black: moveTotal > 0 ? Math.round((m.black / moveTotal) * 100) : 0,
+          }
+        })
+        .sort((a, b) => b.total - a.total)
+
+      explorerError.value = ""
+
+    } catch (error) {
+      console.warn("Explorer fetch failed:", error)
+      explorerError.value = "No connection to explorer"
+      explorerStats.value = null
+      explorerMoves.value = []
+    } finally {
+      explorerLoading.value = false
+    }
+  }
+
+  function playExplorerMove(uci) {
+    const result = applyUciMove(uci)
+    if (!result) return
+    soundForLastMove(result)
+    boardAPI.value.setPosition(chess.fen())
+    getAccuracy()
+  }
+
+  if (route.query.white || route.query.black) {
+    hasPlayerInfo.value = true
+    if (route.query.white) whiteName.value = route.query.white
+    if (route.query.black) blackName.value = route.query.black
+    if (route.query.whiteRating) whiteRating.value = route.query.whiteRating
+    if (route.query.blackRating) blackRating.value = route.query.blackRating
+  }
+
+  const topPlayer = computed(() => (
+    isFlipped.value
+      ? { name: whiteName.value, rating: whiteRating.value, side: 'white' }
+      : { name: blackName.value, rating: blackRating.value, side: 'black' }
+  ))
+
+  const bottomPlayer = computed(() => (
+    isFlipped.value
+      ? { name: blackName.value, rating: blackRating.value, side: 'black' }
+      : { name: whiteName.value, rating: whiteRating.value, side: 'white' }
+  ))
+
+  let longPressTimer = null
+  let longPressTriggered = false
+  let toastTimeout = null
+  let audioCtx = null
+  let accuracyDebounceTimer = null
+  let lastPress = 0
+
+  const moveTree = {
+    id: 0,
+    san: null,
+    uci: null,
+    fen: chess.fen(),
+    accuracy: null,
+    analysisData: null, 
+    parent: null,
+    children: []
+  }
+
+  let nodeIdCounter = 1
+  const nodeMap = { 0: moveTree }
+  const currentNode = shallowRef(moveTree)
+
+  const renderedMoves = computed(() => {
+    treeVersion.value
+    const rows = []
+
+    function makeCell(node, moveNum, showAsStart, depth) {
+      const isWhite = moveNum % 2 === 1
+      return {
+        key: `cell-${node.id}`,
+        node,
+        displayNum: Math.ceil(moveNum / 2),
+        isWhite,
+        showNum: isWhite || showAsStart,
+        variant: depth > 0
+      }
+    }
+
+    function walk(startNode, moveNum, depth = 0, isStartOfLine = true) {
+      let current = startNode
+      let ply = moveNum
+      let firstRow = true
+
+      if (!current.san) {
+        if (current.children.length === 0) return
+        walk(current.children[0], ply, depth, isStartOfLine)
+        for (const variant of current.children.slice(1)) {
+          walk(variant, ply, depth + 1, true)
+        }
+        return
+      }
+
+      while (current) {
+        const mainReply = current.children[0] ?? null
+
+        rows.push({
+          key: `row-${current.id}`,
+          depth,
+          cells: [
+            makeCell(current, ply, firstRow && isStartOfLine, depth),
+            mainReply ? makeCell(mainReply, ply + 1, false, depth) : null
+          ]
+        })
+
+        for (const variant of current.children.slice(1)) {
+          walk(variant, ply + 1, depth + 1, true)
+        }
+
+        if (mainReply) {
+          for (const variant of mainReply.children.slice(1)) {
+            walk(variant, ply + 2, depth + 1, true)
+          }
+        }
+
+        if (!mainReply) break
+        current = mainReply.children[0] ?? null
+        ply += 2
+        firstRow = false
+      }
+    }
+
+    walk(moveTree, 1)
+    return rows
+  })
+
+  const movesTitle = ref(null)
+  const reportTitle = ref(null)
+
+  function changeActiveToMoves(){
+    activeTab.value = 'moves'
+    if (movesTitle.value) movesTitle.value.style.backgroundColor = activeColor.value
+    if (reportTitle.value) reportTitle.value.style.backgroundColor = passiveColor.value
+    if (explorerTitle.value) explorerTitle.value.style.backgroundColor = passiveColor.value
+  }
+
+  function changeActiveToReport(){
+    activeTab.value = 'report'
+    if (reportTitle.value) reportTitle.value.style.backgroundColor = activeColor.value
+    if (movesTitle.value) movesTitle.value.style.backgroundColor = passiveColor.value
+    if (explorerTitle.value) explorerTitle.value.style.backgroundColor = passiveColor.value
+  }
+
+  function changeActiveToExplorer(){
+    activeTab.value = 'explorer'
+    if (explorerTitle.value) explorerTitle.value.style.backgroundColor = activeColor.value
+    if (movesTitle.value) movesTitle.value.style.backgroundColor = passiveColor.value
+    if (reportTitle.value) reportTitle.value.style.backgroundColor = passiveColor.value
+  }
+
+  function deleteMove(nodeId) {
+    const node = nodeMap[nodeId]
+    if (!node || node.parent === null) return 
+
+    const parent = node.parent
+    const idx = parent.children.indexOf(node)
+    if (idx !== -1) parent.children.splice(idx, 1)
+
+    function collectIds(n, ids) {
+      ids.push(n.id)
+      for (const child of n.children) collectIds(child, ids)
+      return ids
+    }
+    const idsToRemove = collectIds(node, [])
+    const currentWasRemoved = idsToRemove.includes(currentNode.value.id)
+
+    for (const id in idsToRemove) delete nodeMap[id]
+
+    treeVersion.value++
+
+    if (currentWasRemoved) {
+      jumpToNode(parent.id)
+    }
+  }
+
+  function showContextMenu(x, y, nodeId) {
+    const menuWidth = 160
+    const menuHeight = 44
+    contextMenu.value = {
+      visible: true,
+      x: Math.min(x, window.innerWidth - menuWidth - 8),
+      y: Math.min(y, window.innerHeight - menuHeight - 8),
+      nodeId
+    }
+  }
+
+  function closeContextMenu() {
+    contextMenu.value.visible = false
+  }
+
+  function openContextMenu(event, nodeId) {
+    showContextMenu(event.clientX, event.clientY, nodeId)
+  }
+
+  function handleDeleteFromMenu() {
+    if (contextMenu.value.nodeId !== null) deleteMove(contextMenu.value.nodeId)
+    closeContextMenu()
+  }
+
+  function handleTouchStart(event, nodeId) {
+    longPressTriggered = false
+    longPressTimer = setTimeout(() => {
+      longPressTriggered = true
+      const touch = event.touches[0]
+      showContextMenu(touch.clientX, touch.clientY, nodeId)
+      if (navigator.vibrate) navigator.vibrate(10)
+    }, 500)
+  }
+
+  function cancelLongPress() {
+    clearTimeout(longPressTimer)
+  }
+
+  function handleCellClick(nodeId) {
+    if (longPressTriggered) {
+      longPressTriggered = false
+      return
+    }
+    jumpToNode(nodeId)
+  }
+
+  function ensureAudioCtx() {
+    if (!audioCtx) {
+      const Ctx = window.AudioContext || window.webkitAudioContext
+      audioCtx = new Ctx()
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume()
+    return audioCtx
+  }
+
+  function playSound(type) {
+    if (!soundOn.value) return
+    try {
+      const ctx = ensureAudioCtx()
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      const now = ctx.currentTime
+
+      const presets = {
+        move:    { freq: 520, gain: 0.06, dur: 0.09 },
+        capture: { freq: 260, gain: 0.10, dur: 0.14 },
+        check:   { freq: 880, gain: 0.10, dur: 0.20 },
+      }
+      const p = presets[type] ?? presets.move
+
+      osc.type = type === 'capture' ? 'square' : 'sine'
+      osc.frequency.setValueAtTime(p.freq, now)
+      gain.gain.setValueAtTime(p.gain, now)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + p.dur)
+      osc.start(now)
+      osc.stop(now + p.dur + 0.02)
+    } catch (e) {}
+  }
+
+  function soundForLastMove(sanMove) {
+    if (chess.inCheck()) playSound('check')
+    else if (sanMove?.captured) playSound('capture')
+    else playSound('move')
+  }
+
+  watch(showBestArrow, (val) => {
+    if (!val && boardAPI.value) boardAPI.value.hideMoves()
+    else drawBestArrow()
+  })
+
+  watch(currentNode, () => {
+    if (activeTab.value === 'explorer') {
+      importLichessExplorer()
+    }
+  }, { immediate: true })
+
+  watch(activeTab, (newTab) => {
+    if (newTab === 'explorer') {
+      importLichessExplorer()
+    }
+  })
+
+  function showToast(message) {
+    toastMessage.value = message
+    clearTimeout(toastTimeout)
+    toastTimeout = setTimeout(() => { toastMessage.value = '' }, 1800)
+  }
+
+  async function copyToClipboard(text, label) {
+    try {
+      await navigator.clipboard.writeText(text)
+      showToast(`${label} copied to clipboard`)
+    } catch (e) {
+      showToast(`Couldn't copy ${label.toLowerCase()}`)
+    }
+  }
+
+  function copyPGN() { copyToClipboard(chess.pgn() || '(no moves yet)', 'PGN') }
+  function copyFEN() { copyToClipboard(chess.fen(), 'FEN') }
+
+  function drawBestArrow() {
+    if (!showBestArrow.value || !boardAPI.value || !bestArrowSquares.value) return
+    const { from, to } = bestArrowSquares.value
+    boardAPI.value.drawMove(from, to, 'green')
+  }
+
+  async function onBoardCreated(api) {
+    boardAPI.value = api
+    chess.reset()
+    boardAPI.value.setPosition(chess.fen())
+    boardReady = true
+    await tryLoadImportedGame()
+  }
+
+  async function handleBothMoves(move) {
+    const uci = move.promotion ? `${move.from}${move.to}${move.promotion}` : `${move.from}${move.to}`
+    const sanMove = chess.move({ from: move.from, to: move.to, promotion: move.promotion ?? undefined })
+    
+    if (!sanMove) {
+      boardAPI.value.setPosition(currentNode.value.fen)
+      return
+    }
+
+    soundForLastMove(sanMove)
+    const existing = currentNode.value.children.find(c => c.uci === uci)
+
+    if (existing) {
+      currentNode.value = existing
+    } else {
+      const newNode = {
+        id: nodeIdCounter++, san: sanMove.san, uci, fen: chess.fen(), accuracy: null, analysisData: null, parent: currentNode.value, children: []
+      }
+      nodeMap[newNode.id] = newNode
+      currentNode.value.children.push(newNode)
+      currentNode.value = newNode
+      treeVersion.value++
+    }
+
+    movesListUCI.value.push(uci)
+    await getAccuracy()
+  }
+
+  function undoMove() {
+    lastMoveSquare.value = null
+    lastMoveAccuracy.value = null
+    if (currentNode.value.parent === null) return
+    chess.undo()
+    currentNode.value = currentNode.value.parent
+    movesListUCI.value.pop()
+    boardAPI.value.setPosition(chess.fen())
+  }
+
+  function redoMove() {
+    lastMoveSquare.value = null
+    lastMoveAccuracy.value = null
+    if (currentNode.value.children.length === 0) return
+    const nextNode = currentNode.value.children[0]
+    const sanMove = chess.move(nextNode.uci)
+    if (sanMove) soundForLastMove(sanMove)
+    movesListUCI.value.push(nextNode.uci)
+    currentNode.value = nextNode
+    boardAPI.value.setPosition(nextNode.fen)
+  }
+
+  function undoAccuracy() { undoMove(); getAccuracy(); }
+  function redoAccuracy() { redoMove(); getAccuracy(); }
+
+  function jumpToNode(nodeId) {
+    const node = nodeMap[nodeId]
+    if (!node || node === currentNode.value) return
+
+    const uciMoves = []
+    let current = node
+    while (current.parent !== null) {
+      uciMoves.unshift(current.uci)
+      current = current.parent
+    }
+
+    chess.reset()
+    for (const uci of uciMoves) chess.move(uci)
+
+    movesListUCI.value = uciMoves
+    currentNode.value = node
+    boardAPI.value.setPosition(node.fen)
+    moveData.value = null
+    isAccuracy.value = ""
+    color.value = ""
+    getAccuracy()
+  }
+
+  function goToStart() { jumpToNode(0) }
+  function goToEnd() {
+    let node = currentNode.value
+    while (node.children.length > 0) node = node.children[0]
+    jumpToNode(node.id)
+  }
+
+  function resetBoard() {
+    chess.reset()
+    boardAPI.value.setPosition(chess.fen())
+    movesListUCI.value = []
+    currentNode.value = moveTree
+    moveTree.children = []
+    moveTree.fen = chess.fen()
+    nodeIdCounter = 1
+    for (const key in nodeMap) {
+      if (parseInt(key) !== 0) delete nodeMap[key]
+    }
+    treeVersion.value++
+    getAccuracy()
+  }
+
+  function resetAccuracy() {
+    resetBoard()
+    isAccuracy.value = ""
+    color.value = ""
+    moveData.value = null
+  }
+
+  async function getAccuracy() {
+    await cancelAnalysis() 
+    
+    const cached = currentNode.value.analysisData
+    if (cached && cached.depth >= targetDepth.value) {
+      moveData.value = cached
+      lastMoveSquare.value = movesListUCI.value.at(-1)?.slice(2, 4) ?? null
+      lastMoveAccuracy.value = cached.move_accuracy
+      currentDepth.value = cached.depth
+      
+      isAnalyzing.value = false
+      if (showBestArrow.value && boardAPI.value) boardAPI.value.hideMoves()
+      
+      if (typeof evalSize === "function") evalSize()
+      if (typeof moveDescription === "function") moveDescription()
+      if (typeof sanBest === "function") sanBest()
+      if (typeof uciSecondLine === "function") uciSecondLine()
+      if (typeof uciThirdLine === "function") uciThirdLine()
+      if (typeof uciLine === "function") uciLine()
+      drawBestArrow()
+      
+      return 
+    }
+
+    isAnalyzing.value = true
+    bestArrowSquares.value = null
+    if (showBestArrow.value && boardAPI.value) boardAPI.value.hideMoves()
+
+    const beforeFen = currentNode.value.parent ? currentNode.value.parent.fen : moveTree.fen
+    const afterFen = currentNode.value.fen
+
+    await getEvaluation(
+      movesListUCI.value.length === 0 ? '' : movesListUCI.value.at(-1),
+      movesListUCI.value.slice(0, -1),
+      targetDepth.value,
+      (result) => {
+        moveData.value = result
+        lastMoveSquare.value = movesListUCI.value.at(-1)?.slice(2, 4) ?? null
+        lastMoveAccuracy.value = result.move_accuracy
+        
+        currentNode.value.accuracy = result.move_accuracy
+        currentNode.value.analysisData = result 
+        
+        currentDepth.value = result.depth
+        isAnalyzing.value = false
+        
+        if (typeof evalSize === "function") evalSize()
+        if (typeof moveDescription === "function") moveDescription()
+        if (typeof sanBest === "function") sanBest()
+        if (typeof uciSecondLine === "function") uciSecondLine()
+        if (typeof uciThirdLin  const route = useRoute()
+  const router = const()
   const isSettingsOpen = ref(false)
   const isFlipped = computed(() => (rotate.value / 180) % 2 === 1)
 
