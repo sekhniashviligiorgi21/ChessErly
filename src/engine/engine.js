@@ -104,7 +104,7 @@ export async function startEngine() {
             if (msg === "uciok") {
                 sf.postMessage("setoption name MultiPV value 3")
                 currentMultiPV = 3
-                sf.postMessage("setoption name threads value 2")
+                sf.postMessage("setoption name threads value 4")
                 sf.postMessage("isready")
             }
             if (msg === "readyok") {
