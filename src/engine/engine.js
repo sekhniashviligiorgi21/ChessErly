@@ -293,7 +293,7 @@ function findAttackerValues(board, targetRank, targetFile, attackerColor, exclud
     return values
 }
 
-function isSacrifice(afterFen, move) {
+function isSacrifice(beforeFen, afterFen, move) {
     if (!afterFen || !move) return false
 
     const board = parseFenBoard(afterFen)
@@ -303,6 +303,17 @@ function isSacrifice(afterFen, move) {
     // Exclude empty squares, kings, and pawns from being considered the sacrificed piece
     if (!piece || !PIECE_VALUES[piece.type] || piece.type === 'p') return false
 
+    // Consider the value of the piece captured during the move
+    let capturedValue = 0
+    if (beforeFen) {
+        const beforeBoard = parseFenBoard(beforeFen)
+        const targetPiece = beforeBoard[rankIndex][file]
+        // If there was an enemy piece on the square we moved to, we gain its value
+        if (targetPiece && PIECE_VALUES[targetPiece.type]) {
+            capturedValue = PIECE_VALUES[targetPiece.type]
+        }
+    }
+
     const opponentColor = piece.color === 'w' ? 'b' : 'w'
     let attackerValues = findAttackerValues(board, rankIndex, file, opponentColor)
     if (attackerValues.length === 0) return false // nothing attacks it — not hanging
@@ -311,7 +322,6 @@ function isSacrifice(afterFen, move) {
 
     // KING LOGIC FIX: 
     // If the piece is defended, the opponent's King legally cannot take it.
-    // So we filter the King (value 2) OUT of the attackers list if there are defenders.
     if (defenderValues.length > 0) {
         attackerValues = attackerValues.filter(v => v !== 2)
     }
@@ -325,7 +335,7 @@ function isSacrifice(afterFen, move) {
 
     // Simulate the capture sequence (Static Exchange Evaluation)
     let opponentGained = 0
-    let weGained = 0
+    let weGained = capturedValue
     let turn = 'attacker' // opponent's turn to capture first
     let attackerIdx = 0
     let defenderIdx = 0
@@ -578,7 +588,7 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
                 const isOnlyBestMove = brilliant_loss > 200
 
                 if (isOnlyBestMove) {
-                    is_sacrifice = isSacrifice(afterFen, move)
+                    is_sacrifice = isSacrifice(beforeFen, afterFen, move)
                     accuracy = is_sacrifice ? "brilliant" : "great"
                 } else if (brilliant_loss > 100) {
                     accuracy = "great"
