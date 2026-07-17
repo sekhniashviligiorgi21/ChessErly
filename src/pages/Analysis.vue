@@ -11,6 +11,7 @@
   import { startEngine, getEvaluation, cancelAnalysis, setOnLichessRateLimited } from "../engine/engine.js"
   import { useRoute, useRouter } from 'vue-router'
 
+
   const currentTheme = ref(localStorage.getItem('chesslab_theme') || 'brown')
 
   watch(currentTheme, (newTheme) => {
@@ -21,6 +22,7 @@
   const activeColor = ref('var(--btn-active)')
   const passiveColor = ref('var(--btn-idle)')
 
+  // Flag gates for preventing startup racing
   let boardReady = false
   let engineReady = false 
 
@@ -46,7 +48,7 @@
     } else {
       await getAccuracy()
     }
-  });
+      });
 
   onBeforeUnmount(() => {
     window.removeEventListener('keydown', handleKeyDown)
@@ -56,6 +58,7 @@
     clearTimeout(longPressTimer)
   })
 
+  // State
   const route = useRoute()
   const router = useRouter()
   const isSettingsOpen = ref(false)
@@ -104,12 +107,14 @@
   const explorerTitle = ref(null)
   const contextMenu = ref({ visible: false, x: 0, y: 0, nodeId: null })
 
+  // Imported player info
   const whiteName = ref('White')
   const blackName = ref('Black')
   const whiteRating = ref(null)
   const blackRating = ref(null)
   const hasPlayerInfo = ref(false)
 
+  // Lichess opening explorer
   const LICHESS_TOKEN = import.meta.env.VITE_LICHESS_TOKEN
   const opening = ref("")
   const openingEco = ref("")
@@ -204,6 +209,7 @@
     }
   }
 
+  // OPTIMIZED: Uses structural gating to prevent layout-bashing re-renders
   function playExplorerMove(uci) {
     const result = applyUciMove(uci)
     if (!result) return
@@ -611,12 +617,7 @@
     await cancelAnalysis() 
     
     const cached = currentNode.value.analysisData
-    // We require 3 lines for manual review (unless it's the root node which has no moves)
-    const requiresMultiPV3 = !isImporting.value
-    const hasRequiredMultiPV = !requiresMultiPV3 || !currentNode.value.san || (cached?.topMoves?.length >= 3)
-
-    // 1. If we have a full cache (3 lines), use it and stop.
-    if (cached && cached.depth >= targetDepth.value && hasRequiredMultiPV) {
+    if (cached && cached.depth >= targetDepth.value) {
       moveData.value = cached
       lastMoveSquare.value = movesListUCI.value.at(-1)?.slice(2, 4) ?? null
       lastMoveAccuracy.value = cached.move_accuracy
@@ -636,24 +637,6 @@
       return 
     }
 
-    // 2. If we have a partial cache (from MultiPV 1 import), display it immediately!
-    if (cached && !hasRequiredMultiPV) {
-      moveData.value = cached
-      lastMoveSquare.value = movesListUCI.value.at(-1)?.slice(2, 4) ?? null
-      lastMoveAccuracy.value = cached.move_accuracy
-      currentDepth.value = cached.depth
-      
-      if (typeof evalSize === "function") evalSize()
-      if (typeof moveDescription === "function") moveDescription()
-      if (typeof sanBest === "function") sanBest()
-      if (typeof uciSecondLine === "function") uciSecondLine()
-      if (typeof uciThirdLine === "function") uciThirdLine()
-      if (typeof uciLine === "function") uciLine()
-      drawBestArrow()
-      // Do not return! Fall through to the engine call to upgrade it to MultiPV 3
-    }
-
-    // 3. Calculate with the correct MultiPV
     isAnalyzing.value = true
     bestArrowSquares.value = null
     if (showBestArrow.value && boardAPI.value) boardAPI.value.hideMoves()
@@ -690,9 +673,7 @@
       },
       beforeFen,
       afterFen,
-      moveTree.fen,
-      // Use MultiPV 1 during bulk import, MultiPV 3 during manual review
-      isImporting.value ? 1 : 3 
+      moveTree.fen
     )
   }
 
@@ -838,7 +819,7 @@
         top: `${row * 12.5}%`,  
         transform: 'translate(-70%, -35%)',
     }
-  }
+}
 
   async function playMove() {
       if (!moveData.value?.best_move) return
@@ -1050,7 +1031,7 @@
     return Math.round((importProgress.value.current / importProgress.value.total) * 100)
   })
 
-  // Insights tracking logic
+    // Insights tracking logic
   const currentUserId = ref(null)
   let pendingGameMeta = null
 
@@ -1065,7 +1046,7 @@
       pendingGameMeta = {
         white: newQuery.white || 'White',
         black: newQuery.black || 'Black',
-        pgn: newQuery.pgn || null 
+        pgn: newQuery.pgn || null // <-- ADD THIS LINE
       }
     } else {
       pendingGameMeta = null
@@ -1186,14 +1167,14 @@
       trackPly++;
     }
 
-    // 2. Track Piece Performance 
+    // 2. Track Piece Performance (Fixed: extracted from the loop above)
     const pieceStats = { p: {count: 0, sum: 0}, n: {count: 0, sum: 0}, b: {count: 0, sum: 0}, r: {count: 0, sum: 0}, q: {count: 0, sum: 0}, k: {count: 0, sum: 0} };
     let pieceNode = moveTree.children[0];
     let piecePly = 1;
     while (pieceNode) {
       const side = piecePly % 2 === 1 ? 'white' : 'black';
       if (side === myColor && pieceNode.accuracy && pieceNode.san) {
-        let piece = 'p'; 
+        let piece = 'p'; // default to pawn
         const firstChar = pieceNode.san[0];
         if (['N', 'B', 'R', 'Q', 'K'].includes(firstChar)) {
           piece = firstChar.toLowerCase();
@@ -1206,7 +1187,7 @@
       piecePly++;
     }
 
-    // 3. Track Playstyle Data
+        // 3. Track Playstyle Data
     let earlyTrades = 0;
     let evalSwings = 0;
     const tempChess = new Chess();
@@ -1238,6 +1219,7 @@
 
     const openingName = await fetchOpeningNameForSave(uciList)
 
+    // Generate PGN and Hash to match with the Games Library
     const pgn = pendingGameMeta.pgn || chess.pgn()
     function generatePgnHash(pgn) {
       let hash = 0
@@ -1250,6 +1232,7 @@
     }
     const pgnHash = generatePgnHash(pgn)
 
+    // Find the corresponding game in the library and update it with insights
     const gamesRef = collection(db, `users/${currentUserId.value}/games`)
     const dupQ = query(gamesRef, where('pgnHash', '==', pgnHash))
     const dupSnap = await getDocs(dupQ)
@@ -1258,7 +1241,7 @@
       const gameDoc = dupSnap.docs[0]
       await updateDoc(doc(db, `users/${currentUserId.value}/games`, gameDoc.id), {
         insights: {
-          myColor, 
+          myColor, // <-- ADDED THIS so the Colors tab works
           overallAccuracy,
           phaseAccuracy,
           moveCounts: myCounts,
@@ -1271,6 +1254,7 @@
         }
       })
     } else {
+      // Fallback: If it wasn't in the library (e.g. pasted PGN directly to analysis page), save it as a new game
       await addDoc(gamesRef, {
         pgn,
         pgnHash,
@@ -1279,7 +1263,7 @@
         time_class: 'unknown',
         createdAt: serverTimestamp(),
         insights: {
-          myColor, 
+          myColor, // <-- ADDED THIS
           overallAccuracy,
           phaseAccuracy,
           moveCounts: myCounts,
@@ -1317,9 +1301,11 @@
       return "Unknown Opening"
     }
   }
+
 </script>
 
 <template>
+  <!-- Main Settings Integration -->
   <SettingsPanel 
     v-model:isOpen="isSettingsOpen"
     v-model:targetDepth="targetDepth"
@@ -1562,9 +1548,9 @@
               </span>
               <span class="col-split">
                 <div class="split-bar">
-                  <div class="split-white" :style="{ width: m.white + '%' }" :title="'White ' + m.white + '%'"></div>
-                  <div class="split-draw" :style="{ width: m.draws + '%' }" :title="'Draws ' + m.draws + '%'"></div>
-                  <div class="split-black" :style="{ width: m.black + '%' }" :title="'Black ' + m.black + '%'"></div>
+                  <div class="split-white" :style="{ width: m.white + '%' }" :title="`White ${m.white}%`"></div>
+                  <div class="split-draw" :style="{ width: m.draws + '%' }" :title="`Draws ${m.draws}%`"></div>
+                  <div class="split-black" :style="{ width: m.black + '%' }" :title="`Black ${m.black}%`"></div>
                 </div>
               </span>
             </div>
@@ -1577,9 +1563,9 @@
               </span>
               <span class="col-split">
                 <div class="split-bar">
-                  <div class="split-white" :style="{ width: explorerStats.white + '%' }" :title="'White ' + explorerStats.white + '%'"></div>
-                  <div class="split-draw" :style="{ width: explorerStats.draws + '%' }" :title="'Draws ' + explorerStats.draws + '%'"></div>
-                  <div class="split-black" :style="{ width: explorerStats.black + '%' }" :title="'Black ' + explorerStats.black + '%'"></div>
+                  <div class="split-white" :style="{ width: explorerStats.white + '%' }" :title="`White ${explorerStats.white}%`"></div>
+                  <div class="split-draw" :style="{ width: explorerStats.draws + '%' }" :title="`Draws ${explorerStats.draws}%`"></div>
+                  <div class="split-black" :style="{ width: explorerStats.black + '%' }" :title="`Black ${explorerStats.black}%`"></div>
                 </div>
               </span>
             </div>
@@ -1690,6 +1676,9 @@
     border-radius: 8px;
   }
 
+  /* Overrides chessground's default board-image background with a themed
+     checkerboard tied to --board-light / --board-dark, so the board squares
+     recolor along with the rest of the UI when the theme changes. */
   :deep(cg-board) {
     background: conic-gradient(
       var(--board-dark) 90deg,
@@ -2153,7 +2142,7 @@
       left: 50%;
       transform: translate(-50%, -50%);
       font-size: clamp(0.8rem, 1.2vw, 1rem);
-      font-weight: 600;
+      font-weight: 500;
       color: #fff8ef;
       text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.6);
       background: rgba(0, 0, 0, 0.3);
@@ -2468,7 +2457,6 @@
     padding: 0.4rem 0.5rem 0.8rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     margin-bottom: 0.6rem;
-    flex-wrap: wrap;
   }
 
   .explorer-eco {
@@ -2487,8 +2475,9 @@
     font-weight: 700;
     color: #f5f5dc;
     font-size: clamp(0.95rem, 2.2vw, 1.15rem);
-    white-space: normal;
-    word-break: break-word;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .explorer-table {
@@ -2568,7 +2557,7 @@
     height: 1.3rem;
     border-radius: 6px;
     overflow: hidden;
-    box-shadow: inset 0 1px 3px rgba(0,0,0,0.35);
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
   }
 
   .split-white, .split-draw, .split-black {

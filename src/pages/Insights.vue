@@ -5,6 +5,7 @@
   import { onAuthStateChanged } from 'firebase/auth'
   import { collection, query, orderBy, getDocs } from 'firebase/firestore'
 
+  // --- Apply theme instantly ---
   const currentTheme = ref(localStorage.getItem('chesslab_theme') || 'brown')
   watch(currentTheme, (newTheme) => {
     document.documentElement.setAttribute('data-theme', newTheme)
@@ -45,6 +46,7 @@
     }
   }
 
+  // --- Helper: Map Accuracy to Classification ---
   function getAccuracyMeta(acc) {
     if (acc === null || acc === undefined) return { label: 'N/A', icon: null, color: '#666' }
     if (acc >= 95) return { label: 'Brilliant', icon: '/moveClassifications/brilliant.png', color: '#03aea7' }
@@ -57,6 +59,7 @@
     return { label: 'Blunder', icon: '/moveClassifications/blunder.png', color: '#FF0000' }
   }
 
+  // --- Computed Statistics ---
   const totalGames = computed(() => insights.value.length)
   const totalMoves = computed(() => insights.value.reduce((sum, game) => sum + (game.insights?.totalMoves || 0), 0))
 
@@ -69,6 +72,7 @@
 
   const overallMeta = computed(() => getAccuracyMeta(overallAccuracy.value ? parseFloat(overallAccuracy.value) : null))
 
+  // --- Performance by Color ---
   const colorPerformance = computed(() => {
     const colors = { 
       white: { games: 0, win: 0, loss: 0, draw: 0, accs: [], blunders: 0 }, 
@@ -95,6 +99,7 @@
     }
   })
 
+  // --- Piece Performance ---
   const pieceMeta = [
     { key: 'p', label: 'Pawn', symbol: '♟', color: '#cccccc' },
     { key: 'n', label: 'Knight', symbol: '♞', color: '#a8d97a' },
@@ -134,11 +139,12 @@
     })
   })
 
+  // --- Game Length Survival Curves ---
   const gameLengthStats = computed(() => {
     const buckets = {
-      short: { label: 'Short (<20)', games: 0, win: 0, loss: 0, draw: 0, accs: [], blunders: 0 },
-      medium: { label: 'Medium (20-40)', games: 0, win: 0, loss: 0, draw: 0, accs: [], blunders: 0 },
-      long: { label: 'Long (40+)', games: 0, win: 0, loss: 0, draw: 0, accs: [], blunders: 0 }
+      short: { label: 'Short (<20)', games: 0, win: 0, accs: [], blunders: 0 },
+      medium: { label: 'Medium (20-40)', games: 0, win: 0, accs: [], blunders: 0 },
+      long: { label: 'Long (40+)', games: 0, win: 0, accs: [], blunders: 0 }
     }
     insights.value.forEach(g => {
       const moves = g.insights?.totalMoves || 0
@@ -148,18 +154,17 @@
       buckets[bucket].games++
       buckets[bucket].accs.push(g.insights.overallAccuracy || 0)
       buckets[bucket].blunders += (g.insights.moveCounts?.blunder || 0) + (g.insights.moveCounts?.mistake || 0)
-      
       const myRes = c === 'white' ? g.white?.result : g.black?.result
       if (myRes === 'win') buckets[bucket].win++
-      else if (['lose', 'checkmated', 'resigned', 'abandoned'].includes(myRes)) buckets[bucket].loss++
-      else buckets[bucket].draw++
     })
     return Object.values(buckets).map(b => ({
       ...b,
+      winRate: b.games > 0 ? ((b.win / b.games) * 100).toFixed(0) : 0,
       avgAcc: b.accs.length ? (b.accs.reduce((a,b) => a+b, 0) / b.accs.length).toFixed(1) : null
     }))
   })
 
+  // --- Playstyle Radar Profile ---
   const playstyleData = computed(() => {
     const totals = { earlyTrades: 0, evalSwings: 0, brilliantMoves: 0, endgameAcc: 0, openingAcc: 0, games: 0 }
     insights.value.forEach(g => {
@@ -180,6 +185,7 @@
     const avgEndgameAcc = totals.endgameAcc / totals.games
     const avgOpeningAcc = totals.openingAcc / totals.games
 
+    // Normalize to 0-100
     const traderScore = Math.min(100, (avgEarlyTrades / 4) * 100)
     const tacticianScore = Math.min(100, ((avgEvalSwings / 8) + (avgBrilliant / 2)) * 50)
     const aggressiveScore = Math.min(100, ((avgBrilliant / 2) + (avgEvalSwings / 10)) * 50)
@@ -193,20 +199,6 @@
       { axis: 'Endgame', value: endgameScore },
       { axis: 'Tactician', value: tacticianScore }
     ]
-  })
-
-  const playstyleSummary = computed(() => {
-    if (!playstyleData.value) return null
-    const sorted = [...playstyleData.value].sort((a, b) => b.value - a.value)
-    const top = sorted[0]
-    const summaries = {
-      Aggressive: "You play aggressively, seeking tactical complications and not afraid of sacrifices.",
-      Defensive: "You play solid, accurate chess in the opening, preferring safe and stable positions.",
-      Trader: "You tend to trade pieces early in the opening, simplifying the position to your advantage.",
-      Endgame: "You excel in the endgame, displaying high accuracy when the board opens up.",
-      Tactician: "You thrive in chaotic, complex positions with wild evaluation swings."
-    }
-    return summaries[top.axis]
   })
 
   const radarPoints = computed(() => {
@@ -288,15 +280,6 @@
     return totals
   })
 
-  const avgMoveCounts = computed(() => {
-    const avgs = {}
-    if (totalGames.value === 0) return avgs
-    for (const key in moveCounts.value) {
-      avgs[key] = (moveCounts.value[key] / totalGames.value).toFixed(1)
-    }
-    return avgs
-  })
-
   const moveCountsTotal = computed(() => Object.values(moveCounts.value).reduce((a, b) => a + b, 0))
   const classificationOrder = ['brilliant', 'great', 'best', 'book', 'excellent', 'good', 'inaccuracy', 'mistake', 'blunder']
 
@@ -308,6 +291,7 @@
       .filter(seg => seg.count > 0)
   })
 
+  // --- Heatmap Logic Generator ---
   function generateHeatmapData(type) {
     const squareKey = type === 'bad' ? 'blunderSquares' : 'goodSquares';
     const squares = {};
@@ -498,24 +482,6 @@
                 <div v-else class="panel-empty">
                   <p>Not enough data to generate a playstyle profile yet. Analyze a few more games!</p>
                 </div>
-                
-                <div class="playstyle-info" v-if="playstyleSummary">
-                  <div class="playstyle-summary-card">
-                    <h3>Your Playstyle Profile</h3>
-                    <p>{{ playstyleSummary }}</p>
-                  </div>
-                  
-                  <div class="playstyle-calculations">
-                    <h4>How is this calculated?</h4>
-                    <ul>
-                      <li><strong>Aggressive:</strong> Based on sacrifices (brilliant moves) and sharp evaluation jumps.</li>
-                      <li><strong>Defensive:</strong> Derived from your accuracy during the opening phase.</li>
-                      <li><strong>Trader:</strong> Frequency of early piece trades within the first 12 moves.</li>
-                      <li><strong>Endgame:</strong> Your overall accuracy during the endgame phase.</li>
-                      <li><strong>Tactician:</strong> Combination of evaluation swings and brilliant moves found.</li>
-                    </ul>
-                  </div>
-                </div>
               </template>
 
               <!-- STAMINA TAB -->
@@ -524,22 +490,14 @@
                   <div v-for="bucket in gameLengthStats" :key="bucket.label" class="stamina-card">
                     <h3 class="stamina-title">{{ bucket.label }}</h3>
                     <span class="stamina-games">{{ bucket.games }} Games</span>
-                    
                     <div class="stamina-stat">
-                      <span class="stat-label">Record</span>
+                      <span class="stat-label">Win Rate</span>
+                      <span class="stamina-val">{{ bucket.winRate }}%</span>
                     </div>
-                    <div class="wld-bar">
-                      <div class="wld-segment win" :style="{ width: (bucket.games > 0 ? (bucket.win / bucket.games) * 100 : 0) + '%' }" :title="'Wins: ' + bucket.win"></div>
-                      <div class="wld-segment draw" :style="{ width: (bucket.games > 0 ? (bucket.draw / bucket.games) * 100 : 0) + '%' }" :title="'Draws: ' + bucket.draw"></div>
-                      <div class="wld-segment loss" :style="{ width: (bucket.games > 0 ? (bucket.loss / bucket.games) * 100 : 0) + '%' }" :title="'Losses: ' + bucket.loss"></div>
+                    <div class="stamina-bar-container">
+                      <div class="stamina-bar win" :style="{ width: bucket.winRate + '%' }"></div>
                     </div>
-                    <div class="wld-legend">
-                      <span><span class="dot win"></span> Win ({{ bucket.win }})</span>
-                      <span><span class="dot draw"></span> Draw ({{ bucket.draw }})</span>
-                      <span><span class="dot loss"></span> Loss ({{ bucket.loss }})</span>
-                    </div>
-
-                    <div class="stamina-stat" style="margin-top: 1rem;">
+                    <div class="stamina-stat">
                       <span class="stat-label">Avg Accuracy</span>
                       <span class="stamina-val" :style="{color: bucket.avgAcc ? getAccuracyMeta(parseFloat(bucket.avgAcc)).color : '#fff'}">{{ bucket.avgAcc ? bucket.avgAcc + '%' : '—' }}</span>
                     </div>
@@ -573,9 +531,9 @@
                         <span class="color-val" style="color: #ff8a80;">{{ colorPerformance.white.blunders }}</span>
                       </div>
                       <div class="wld-bar">
-                        <div class="wld-segment win" :style="{ width: (colorPerformance.white.games > 0 ? (colorPerformance.white.win / colorPerformance.white.games) * 100 : 0) + '%' }" :title="'Wins: ' + colorPerformance.white.win"></div>
-                        <div class="wld-segment draw" :style="{ width: (colorPerformance.white.games > 0 ? (colorPerformance.white.draw / colorPerformance.white.games) * 100 : 0) + '%' }" :title="'Draws: ' + colorPerformance.white.draw"></div>
-                        <div class="wld-segment loss" :style="{ width: (colorPerformance.white.games > 0 ? (colorPerformance.white.loss / colorPerformance.white.games) * 100 : 0) + '%' }" :title="'Losses: ' + colorPerformance.white.loss"></div>
+                        <div class="wld-segment win" :style="{ width: (colorPerformance.white.games > 0 ? (colorPerformance.white.win / colorPerformance.white.games) * 100 : 0) + '%' }" :title="`Wins: ${colorPerformance.white.win}`"></div>
+                        <div class="wld-segment draw" :style="{ width: (colorPerformance.white.games > 0 ? (colorPerformance.white.draw / colorPerformance.white.games) * 100 : 0) + '%' }" :title="`Draws: ${colorPerformance.white.draw}`"></div>
+                        <div class="wld-segment loss" :style="{ width: (colorPerformance.white.games > 0 ? (colorPerformance.white.loss / colorPerformance.white.games) * 100 : 0) + '%' }" :title="`Losses: ${colorPerformance.white.loss}`"></div>
                       </div>
                       <div class="wld-legend">
                         <span><span class="dot win"></span> Win ({{ colorPerformance.white.win }})</span>
@@ -604,9 +562,9 @@
                         <span class="color-val" style="color: #ff8a80;">{{ colorPerformance.black.blunders }}</span>
                       </div>
                       <div class="wld-bar">
-                        <div class="wld-segment win" :style="{ width: (colorPerformance.black.games > 0 ? (colorPerformance.black.win / colorPerformance.black.games) * 100 : 0) + '%' }" :title="'Wins: ' + colorPerformance.black.win"></div>
-                        <div class="wld-segment draw" :style="{ width: (colorPerformance.black.games > 0 ? (colorPerformance.black.draw / colorPerformance.black.games) * 100 : 0) + '%' }" :title="'Draws: ' + colorPerformance.black.draw"></div>
-                        <div class="wld-segment loss" :style="{ width: (colorPerformance.black.games > 0 ? (colorPerformance.black.loss / colorPerformance.black.games) * 100 : 0) + '%' }" :title="'Losses: ' + colorPerformance.black.loss"></div>
+                        <div class="wld-segment win" :style="{ width: (colorPerformance.black.games > 0 ? (colorPerformance.black.win / colorPerformance.black.games) * 100 : 0) + '%' }" :title="`Wins: ${colorPerformance.black.win}`"></div>
+                        <div class="wld-segment draw" :style="{ width: (colorPerformance.black.games > 0 ? (colorPerformance.black.draw / colorPerformance.black.games) * 100 : 0) + '%' }" :title="`Draws: ${colorPerformance.black.draw}`"></div>
+                        <div class="wld-segment loss" :style="{ width: (colorPerformance.black.games > 0 ? (colorPerformance.black.loss / colorPerformance.black.games) * 100 : 0) + '%' }" :title="`Losses: ${colorPerformance.black.loss}`"></div>
                       </div>
                       <div class="wld-legend">
                         <span><span class="dot win"></span> Win ({{ colorPerformance.black.win }})</span>
@@ -651,15 +609,11 @@
                 <div class="openings-list">
                   <div v-for="(opening, i) in topOpenings" :key="i" class="opening-row">
                     <span class="opening-rank">#{{ i + 1 }}</span>
-                    <div class="opening-info">
-                      <span class="opening-name">{{ opening.name }}</span>
-                      <div class="opening-meta">
-                        <span class="opening-games">{{ opening.count }} games</span>
-                        <div class="opening-acc-container" v-if="opening.avgAccuracy">
-                          <img :src="opening.meta.icon" class="opening-acc-icon" alt="" />
-                          <span class="opening-acc" :style="{color: opening.meta.color}">{{ opening.avgAccuracy }}%</span>
-                        </div>
-                      </div>
+                    <span class="opening-name">{{ opening.name }}</span>
+                    <span class="opening-games">{{ opening.count }} games</span>
+                    <div class="opening-acc-container" v-if="opening.avgAccuracy">
+                      <img :src="opening.meta.icon" class="opening-acc-icon" alt="" />
+                      <span class="opening-acc" :style="{color: opening.meta.color}">{{ opening.avgAccuracy }}%</span>
                     </div>
                   </div>
                 </div>
@@ -688,7 +642,7 @@
                                 class="heatmap-square bad"
                                 :class="{ light: (sq.sq.charCodeAt(0) + sq.sq.charCodeAt(1)) % 2 === 0, dark: (sq.sq.charCodeAt(0) + sq.sq.charCodeAt(1)) % 2 !== 0, active: sq.intensity > 0, selected: selectedSquare?.sq === sq.sq }"
                                 :style="{ '--intensity': sq.intensity }"
-                                :title="sq.sq + ': ' + sq.count + ' mistake' + (sq.count === 1 ? '' : 's')"
+                                :title="`${sq.sq}: ${sq.count} mistake${sq.count === 1 ? '' : 's'}`"
                                 @click="tapSquare(sq)"
                               >
                                 <span v-if="sq.count > 0" class="sq-count" aria-hidden="true">{{ sq.count }}</span>
@@ -721,7 +675,7 @@
                                 class="heatmap-square good"
                                 :class="{ light: (sq.sq.charCodeAt(0) + sq.sq.charCodeAt(1)) % 2 === 0, dark: (sq.sq.charCodeAt(0) + sq.sq.charCodeAt(1)) % 2 !== 0, active: sq.intensity > 0, selected: selectedSquare?.sq === sq.sq }"
                                 :style="{ '--intensity': sq.intensity }"
-                                :title="sq.sq + ': ' + sq.count + ' good move' + (sq.count === 1 ? '' : 's')"
+                                :title="`${sq.sq}: ${sq.count} good move${sq.count === 1 ? '' : 's'}`"
                                 @click="tapSquare(sq)"
                               >
                                 <span v-if="sq.count > 0" class="sq-count" aria-hidden="true">{{ sq.count }}</span>
@@ -750,7 +704,7 @@
               <template v-if="activeTab === 'moves'">
                 <div class="move-bar-container" v-if="moveCountsBarSegments.length">
                   <div class="move-bar">
-                    <div v-for="seg in moveCountsBarSegments" :key="seg.key" class="move-bar-segment" :style="{ width: seg.percent + '%', background: seg.meta.color }" :title="seg.meta.label + ': ' + seg.count + ' (' + seg.percent.toFixed(1) + '%)'"></div>
+                    <div v-for="seg in moveCountsBarSegments" :key="seg.key" class="move-bar-segment" :style="{ width: seg.percent + '%', background: seg.meta.color }" :title="`${seg.meta.label}: ${seg.count} (${seg.percent.toFixed(1)}%)`"></div>
                   </div>
                 </div>
                 <div class="move-classes-grid">
@@ -758,10 +712,7 @@
                     <img :src="meta.icon" class="mc-icon-img" :alt="meta.label" />
                     <span class="mc-label" :style="{ color: meta.color }">{{ meta.label }}</span>
                     <span class="mc-count">{{ moveCounts[key] }}</span>
-                    <div class="mc-avg-container">
-                      <span class="mc-avg">{{ avgMoveCounts[key] }}</span>
-                      <span class="mc-avg-label">/ game</span>
-                    </div>
+                    <span class="mc-percent" v-if="moveCountsTotal">{{ ((moveCounts[key] / moveCountsTotal) * 100).toFixed(1) }}%</span>
                   </div>
                 </div>
               </template>
@@ -982,6 +933,7 @@
     }
   }
 
+  /* Hero Card */
   .hero-card {
     display: flex;
     background: rgba(0, 0, 0, 0.25);
@@ -1053,9 +1005,17 @@
     width: fit-content;
   }
 
-  .trend-pill.up { color: #8fd97a; }
-  .trend-pill.down { color: #ff8a80; }
-  .trend-pill.flat { color: rgba(244, 240, 227, 0.6); }
+  .trend-pill.up {
+    color: #8fd97a;
+  }
+
+  .trend-pill.down {
+    color: #ff8a80;
+  }
+
+  .trend-pill.flat {
+    color: rgba(244, 240, 227, 0.6);
+  }
 
   .stat-label {
     font-size: 0.75rem;
@@ -1065,6 +1025,7 @@
     color: rgba(244, 240, 227, 0.6);
   }
 
+  /* Phase Cards */
   .phase-grid {
     display: flex;
     flex-direction: column;
@@ -1129,6 +1090,7 @@
     font-weight: 700;
   }
 
+  /* Playstyle Tab */
   .playstyle-panel {
     display: flex;
     flex-wrap: wrap;
@@ -1200,71 +1162,7 @@
     text-align: right;
   }
 
-  .playstyle-info {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-    margin-top: 1rem;
-  }
-
-  .playstyle-summary-card {
-    background: rgba(106, 209, 63, 0.05);
-    border: 1px solid rgba(106, 209, 63, 0.2);
-    border-radius: 12px;
-    padding: 1.5rem;
-    text-align: center;
-  }
-
-  .playstyle-summary-card h3 {
-    font-family: serif;
-    color: #8fd97a;
-    font-size: 1.1rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin: 0 0 0.5rem 0;
-  }
-
-  .playstyle-summary-card p {
-    color: rgba(244, 240, 227, 0.8);
-    font-size: 0.95rem;
-    line-height: 1.5;
-    margin: 0;
-  }
-
-  .playstyle-calculations {
-    background: rgba(0, 0, 0, 0.15);
-    border-radius: 12px;
-    padding: 1.5rem;
-  }
-
-  .playstyle-calculations h4 {
-    font-family: serif;
-    color: #f5f5dc;
-    font-size: 0.9rem;
-    font-weight: 600;
-    margin: 0 0 0.75rem 0;
-  }
-
-  .playstyle-calculations ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .playstyle-calculations li {
-    font-size: 0.85rem;
-    color: rgba(244, 240, 227, 0.6);
-    line-height: 1.4;
-  }
-
-  .playstyle-calculations li strong {
-    color: rgba(244, 240, 227, 0.85);
-  }
-
+  /* Stamina Tab */
   .stamina-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -1309,47 +1207,21 @@
     color: #f5f5dc;
   }
 
-  .wld-bar {
-    display: flex;
-    width: 100%;
-    height: 10px;
-    border-radius: 5px;
-    overflow: hidden;
-    margin-top: 0.5rem;
-    background: rgba(0, 0, 0, 0.3);
-  }
-
-  .wld-segment {
-    height: 100%;
-    transition: width 0.5s ease;
-  }
-
-  .wld-segment.win { background: #8fd97a; }
-  .wld-segment.draw { background: #d9b36a; }
-  .wld-segment.loss { background: #ff8a80; }
-
-  .wld-legend {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    font-size: 0.75rem;
-    color: rgba(244, 240, 227, 0.6);
-    margin-top: 0.5rem;
-  }
-
-  .wld-legend .dot {
-    display: inline-block;
-    width: 8px;
+  .stamina-bar-container {
     height: 8px;
-    border-radius: 50%;
-    margin-right: 4px;
-    vertical-align: middle;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: -0.5rem;
   }
 
-  .wld-legend .dot.win { background: #8fd97a; }
-  .wld-legend .dot.draw { background: #d9b36a; }
-  .wld-legend .dot.loss { background: #ff8a80; }
+  .stamina-bar.win {
+    height: 100%;
+    background: #8fd97a;
+    border-radius: 4px;
+  }
 
+  /* Colors Tab */
   .colors-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -1387,8 +1259,14 @@
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
   }
 
-  .color-swatch.white { background: #f4f0e3; }
-  .color-swatch.black { background: #1a1a1a; border: 1px solid #333; }
+  .color-swatch.white {
+    background: #f4f0e3;
+  }
+
+  .color-swatch.black {
+    background: #1a1a1a;
+    border: 1px solid #333;
+  }
 
   .color-title {
     font-family: serif;
@@ -1417,6 +1295,64 @@
     color: #f5f5dc;
   }
 
+  .wld-bar {
+    display: flex;
+    width: 100%;
+    height: 10px;
+    border-radius: 5px;
+    overflow: hidden;
+    margin-top: 0.5rem;
+    background: rgba(0, 0, 0, 0.3);
+  }
+
+  .wld-segment {
+    height: 100%;
+    transition: width 0.5s ease;
+  }
+
+  .wld-segment.win {
+    background: #8fd97a;
+  }
+
+  .wld-segment.draw {
+    background: #d9b36a;
+  }
+
+  .wld-segment.loss {
+    background: #ff8a80;
+  }
+
+  .wld-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    font-size: 0.75rem;
+    color: rgba(244, 240, 227, 0.6);
+    margin-top: 0.5rem;
+  }
+
+  .wld-legend .dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 4px;
+    vertical-align: middle;
+  }
+
+  .wld-legend .dot.win {
+    background: #8fd97a;
+  }
+
+  .wld-legend .dot.draw {
+    background: #d9b36a;
+  }
+
+  .wld-legend .dot.loss {
+    background: #ff8a80;
+  }
+
+  /* Pieces Tab */
   .pieces-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -1434,7 +1370,9 @@
     transition: transform 0.2s;
   }
 
-  .piece-card:hover { transform: translateY(-2px); }
+  .piece-card:hover {
+    transform: translateY(-2px);
+  }
 
   .piece-header {
     display: flex;
@@ -1473,7 +1411,10 @@
     gap: 0.4rem;
   }
 
-  .piece-icon { width: 20px; height: 20px; }
+  .piece-icon {
+    width: 20px;
+    height: 20px;
+  }
 
   .piece-val {
     font-family: "JetBrains Mono", monospace;
@@ -1496,6 +1437,7 @@
     transition: width 0.5s ease;
   }
 
+  /* Openings */
   .openings-list {
     display: flex;
     flex-direction: column;
@@ -1504,7 +1446,7 @@
 
   .opening-row {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 1rem;
     padding: 1rem 1.5rem;
     background: rgba(0, 0, 0, 0.2);
@@ -1513,7 +1455,9 @@
     transition: border-color 0.2s;
   }
 
-  .opening-row:hover { border-color: rgba(255, 255, 255, 0.1); }
+  .opening-row:hover {
+    border-color: rgba(255, 255, 255, 0.1);
+  }
 
   .opening-rank {
     font-family: "JetBrains Mono", monospace;
@@ -1521,29 +1465,16 @@
     color: rgba(244, 240, 227, 0.4);
     font-size: 0.9rem;
     width: 30px;
-    flex-shrink: 0;
-  }
-
-  .opening-info {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    min-width: 0;
   }
 
   .opening-name {
+    flex: 1;
     font-weight: 600;
     color: #f5f5dc;
     font-size: 0.95rem;
-    word-break: break-word;
-  }
-
-  .opening-meta {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .opening-games {
@@ -1561,7 +1492,10 @@
     border-radius: 8px;
   }
 
-  .opening-acc-icon { width: 20px; height: 20px; }
+  .opening-acc-icon {
+    width: 20px;
+    height: 20px;
+  }
 
   .opening-acc {
     font-family: "JetBrains Mono", monospace;
@@ -1569,6 +1503,7 @@
     font-weight: 700;
   }
 
+  /* Heatmaps */
   .heatmap-panel {
     display: flex;
     flex-direction: column;
@@ -1614,8 +1549,13 @@
     width: 100%;
   }
 
-  .section-subtitle.bad-color { color: #ff8a80; }
-  .section-subtitle.good-color { color: #8fd97a; }
+  .section-subtitle.bad-color {
+    color: #ff8a80;
+  }
+
+  .section-subtitle.good-color {
+    color: #8fd97a;
+  }
 
   .heatmap-total {
     font-size: 0.75rem;
@@ -1654,7 +1594,10 @@
     flex-direction: column;
   }
 
-  .heatmap-row { display: flex; flex: 1; }
+  .heatmap-row {
+    display: flex;
+    flex: 1;
+  }
 
   .heatmap-square {
     flex: 1;
@@ -1673,8 +1616,13 @@
     font-family: inherit;
   }
 
-  .heatmap-square.light { background: var(--board-light); }
-  .heatmap-square.dark { background: var(--board-dark); }
+  .heatmap-square.light {
+    background: var(--board-light);
+  }
+
+  .heatmap-square.dark {
+    background: var(--board-dark);
+  }
 
   .heatmap-square.bad.active {
     background: color-mix(in srgb, #ff2828 calc(var(--intensity) * 60%), var(--board-dark));
@@ -1682,7 +1630,9 @@
     animation: pulseGlow 2s infinite alternate;
   }
 
-  .heatmap-square.bad.light.active { background: color-mix(in srgb, #ff2828 calc(var(--intensity) * 60%), var(--board-light)); }
+  .heatmap-square.bad.light.active {
+    background: color-mix(in srgb, #ff2828 calc(var(--intensity) * 60%), var(--board-light));
+  }
 
   .heatmap-square.good.active {
     background: color-mix(in srgb, #6ad13f calc(var(--intensity) * 60%), var(--board-dark));
@@ -1690,11 +1640,17 @@
     animation: pulseGlow 2s infinite alternate;
   }
 
-  .heatmap-square.good.light.active { background: color-mix(in srgb, #6ad13f calc(var(--intensity) * 60%), var(--board-light)); }
+  .heatmap-square.good.light.active {
+    background: color-mix(in srgb, #6ad13f calc(var(--intensity) * 60%), var(--board-light));
+  }
 
   @keyframes pulseGlow {
-    from { filter: brightness(0.95); }
-    to { filter: brightness(1.15); }
+    from {
+      filter: brightness(0.95);
+    }
+    to {
+      filter: brightness(1.15);
+    }
   }
 
   .heatmap-square:hover,
@@ -1734,7 +1690,9 @@
     min-height: 1.2em;
   }
 
-  .heatmap-selected-readout.visible { color: #f5f5dc; }
+  .heatmap-selected-readout.visible {
+    color: #f5f5dc;
+  }
 
   .heatmap-selected-readout strong {
     font-family: "JetBrains Mono", monospace;
@@ -1749,6 +1707,7 @@
     max-width: 400px;
   }
 
+  /* Move Classes */
   .move-bar-container {
     background: rgba(0, 0, 0, 0.2);
     border-radius: 12px;
@@ -1786,9 +1745,14 @@
     transition: transform 0.2s;
   }
 
-  .move-class-box:hover { transform: translateY(-2px); }
+  .move-class-box:hover {
+    transform: translateY(-2px);
+  }
 
-  .mc-icon-img { width: 36px; height: 36px; }
+  .mc-icon-img {
+    width: 36px;
+    height: 36px;
+  }
 
   .mc-label {
     font-size: 0.8rem;
@@ -1803,24 +1767,10 @@
     margin-top: 0.15rem;
   }
 
-  .mc-avg-container {
-    display: flex;
-    align-items: baseline;
-    gap: 0.2rem;
-    margin-top: 0.25rem;
-  }
-
-  .mc-avg {
+  .mc-percent {
     font-family: "JetBrains Mono", monospace;
-    font-size: 0.9rem;
-    font-weight: 700;
-    color: rgba(244, 240, 227, 0.8);
-  }
-
-  .mc-avg-label {
-    font-size: 0.65rem;
-    color: rgba(244, 240, 227, 0.4);
-    text-transform: uppercase;
+    font-size: 0.72rem;
+    color: rgba(244, 240, 227, 0.5);
   }
 
   @media (max-width: 600px) {
@@ -1840,7 +1790,11 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .heatmap-square.active { animation: none; }
-    .tab-panel { animation: none; }
+    .heatmap-square.active {
+      animation: none;
+    }
+    .tab-panel {
+      animation: none;
+    }
   }
 </style>

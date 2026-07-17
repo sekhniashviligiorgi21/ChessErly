@@ -89,18 +89,22 @@ function enterLichessCooldown() {
     }
 }
 
+// Standard starting position FEN, used to detect "this is really just startpos"
+// so we don't force a UCI `position fen ...` command unnecessarily.
 const STARTPOS_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 
 export async function startEngine() {
     return new Promise((resolve) => {
-        sf = new Worker('/stockfish/stockfish-17.1-lite-single.js')
+        sf = new Worker('/stockfish/stockfish-18-lite.js')
         sf11 = new Worker('/stockfish/stockfish.js')
 
+        // Initialize SF18
         const onMessage = (e) => {
             const msg = e.data
             if (msg === "uciok") {
                 sf.postMessage("setoption name MultiPV value 3")
                 currentMultiPV = 3
+                sf.postMessage("setoption name threads value 2")
                 sf.postMessage("isready")
             }
             if (msg === "readyok") {
@@ -111,6 +115,7 @@ export async function startEngine() {
         sf.addEventListener("message", onMessage)
         sf.postMessage("uci")
 
+        // Initialize SF11
         const onMessage11 = (e) => {
             const msg = e.data
             if (msg === "uciok") {
@@ -166,6 +171,10 @@ function isPositionOutOfBook(movesList) {
     return false
 }
 
+// hasCustomRoot: true whenever the game isn't rooted at the standard starting
+// position. Lichess's masters explorer only knows about games from the real
+// startpos, so a move list relative to a custom FEN would return meaningless
+// "book move" data. Skip the check entirely in that case.
 async function isBookMove(movesList, move, hasCustomRoot = false) {
     if (hasCustomRoot) return false
     if (isLichessOnCooldown()) return false
@@ -236,6 +245,8 @@ function normalizeLine(line) {
 async function getCloudEval(fen, multiPV) {
     if (isLichessOnCooldown()) return null
 
+    // Include multiPV in the cache key to avoid collisions between
+    // "before" (MultiPV 2) and "after" (MultiPV 3) position requests.
     const cacheKey = `${fen}|${multiPV}`
 
     if (cloudEvalCache.has(cacheKey)) {
@@ -302,10 +313,18 @@ async function getCloudEval(fen, multiPV) {
     }
 }
 
+// rootFen: the FEN the game tree actually starts from. Null/undefined (or the
+// standard starting position) behaves exactly like the old startpos-only code.
+// Anything else means `moves` is a UCI sequence relative to that FEN, not to
+// the real chess starting position, so Stockfish must be told to root its
+// search there via `position fen <rootFen> moves ...` instead of
+// `position startpos moves ...`.
 function analyzePosition(moves, depth, onUpdate = null, runsf11 = false, multiPV = 3, rootFen = null) {
     const myId = analysisId
     const effectiveRoot = (rootFen && rootFen !== STARTPOS_FEN) ? rootFen : null
 
+    // FIX: Check local calculation cache before asking Stockfish to crunch numbers again.
+    // Cache key includes the root FEN so FEN-rooted lines never collide with startpos lines.
     const cacheKey = `${effectiveRoot ?? 'startpos'}|${moves.join(",")}|${depth}|${multiPV}|${runsf11}`
     if (localEvalCache.has(cacheKey)) {
         const cachedResult = localEvalCache.get(cacheKey)
@@ -323,6 +342,9 @@ function analyzePosition(moves, depth, onUpdate = null, runsf11 = false, multiPV
         currentResolve = resolve
         let topMoves = [], evaluation = null, best11 = null
 
+        // Side-to-move parity: normally white moves on even ply counts from
+        // startpos. When rooted at a custom FEN, parity must instead be
+        // derived from whichever side the FEN says moves first.
         const rootSideIsWhite = effectiveRoot
             ? effectiveRoot.split(' ')[1] !== 'b'
             : true
@@ -330,6 +352,7 @@ function analyzePosition(moves, depth, onUpdate = null, runsf11 = false, multiPV
             ? (moves.length % 2 === 1)
             : (moves.length % 2 === 0)
 
+        // stockfish 11 handler
         sf11.onmessage = (i) => {
             if (analysisId !== myId) return
             const msg11 = i.data
@@ -339,6 +362,7 @@ function analyzePosition(moves, depth, onUpdate = null, runsf11 = false, multiPV
             }
         }
 
+        // stockfish 18 handler
         sf.onmessage = (e) => {
             if (analysisId !== myId) return
             const msg = e.data
@@ -388,6 +412,7 @@ function analyzePosition(moves, depth, onUpdate = null, runsf11 = false, multiPV
 
                     const result = { evaluation, topMoves, best11, currentDepth: depth }
 
+                    // FIX: Save calculated results to local cache when complete
                     localEvalCache.set(cacheKey, result)
                     localEvalDirty = true
                     schedulePersist()
@@ -441,13 +466,16 @@ async function analyzeWithCloudFallback(fen, moves, depth, onUpdate, runsf11, mu
     return analyzePosition(moves, depth, onUpdate, runsf11, multiPV, rootFen)
 }
 
-export async function getEvaluation(move, movesList, depth, onUpdate = null, beforeFen = null, afterFen = null, rootFen = null, multiPV = 3) {
+// rootFen: pass the FEN the current game/analysis is rooted at (e.g. a
+// pasted FEN position). Omit it, or pass the standard starting position,
+// for ordinary games that start from move 1 as usual.
+export async function getEvaluation(move, movesList, depth, onUpdate = null, beforeFen = null, afterFen = null, rootFen = null) {
     const myId = analysisId
     const hasCustomRoot = !!(rootFen && rootFen !== STARTPOS_FEN)
 
     const beforePromise = beforeFen
-        ? analyzeWithCloudFallback(beforeFen, movesList, 10, null, true, 2, rootFen) 
-        : analyzePosition(movesList, 10, null, true, 2, rootFen) 
+        ? analyzeWithCloudFallback(beforeFen, movesList, 10, null, true, 2, rootFen)
+        : analyzePosition(movesList, 10, null, true, 2, rootFen)
 
     const [isBook, before] = await Promise.all([
         isBookMove(movesList, move, hasCustomRoot),
@@ -466,6 +494,8 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
 
     const afterMoves = move ? [...movesList, move] : movesList
 
+    // Side-to-move after this move, accounting for a custom FEN root's
+    // starting side (mirrors the parity logic inside analyzePosition).
     const rootSideIsWhite = hasCustomRoot ? (rootFen.split(' ')[1] !== 'b') : true
     const side_to_move = rootSideIsWhite
         ? (afterMoves.length % 2 === 1 ? "w" : "b")
@@ -596,7 +626,7 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
 
     let afterFinal
     if (afterFen) {
-        const cloud = await getCloudEval(afterFen, multiPV)
+        const cloud = await getCloudEval(afterFen, 3)
         if (analysisId !== myId) return null
         if (cloud) {
             afterFinal = cloud
@@ -610,7 +640,7 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
             depth,
             onUpdate ? (data) => onUpdate(buildResult(data.evaluation, data.topMoves, data.currentDepth)) : null,
             false,
-            multiPV,
+            3,
             rootFen
         )
     }
