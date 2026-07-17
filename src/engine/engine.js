@@ -215,9 +215,9 @@ function normalizeLine(line) {
     return line.map(normalizeCastlingUci)
 }
 
-// ---- Sacrifice Detection -------------------------------------------------
+// ---- Sacrifice Detection (Static Exchange Evaluation) -------------------
 const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9 }
-const ATTACKER_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 2 } // King is valued at 2
+const ATTACKER_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 2 } // King is valued at 2 for attack
 
 function parseFenBoard(fen) {
     return fen.split(' ')[0].split('/').map((row) => {
@@ -300,7 +300,7 @@ function isSacrifice(afterFen, move) {
     const { rankIndex, file } = squareToIndices(move.slice(2, 4))
     const piece = board[rankIndex][file]
     
-    // Exclude empty squares, kings, and PAWNS from being considered the sacrificed piece
+    // Exclude empty squares, kings, and pawns from being considered the sacrificed piece
     if (!piece || !PIECE_VALUES[piece.type] || piece.type === 'p') return false
 
     const opponentColor = piece.color === 'w' ? 'b' : 'w'
@@ -319,12 +319,36 @@ function isSacrifice(afterFen, move) {
     // If the King was the only attacker, and it was filtered out, it's not a sacrifice.
     if (attackerValues.length === 0) return false
 
-    // It is a sacrifice if the attackers outnumber the defenders, 
-    // OR if the cheapest attacker is worth less than the piece (a bad trade).
-    const outnumbered = attackerValues.length > defenderValues.length
-    const badTrade = Math.min(...attackerValues) < PIECE_VALUES[piece.type]
+    // Sort attackers and defenders by value (cheapest first)
+    attackerValues.sort((a, b) => a - b)
+    defenderValues.sort((a, b) => a - b)
 
-    return outnumbered || badTrade
+    // Simulate the capture sequence (Static Exchange Evaluation)
+    let opponentGained = 0
+    let weGained = 0
+    let turn = 'attacker' // opponent's turn to capture first
+    let attackerIdx = 0
+    let defenderIdx = 0
+    let currentPieceValue = PIECE_VALUES[piece.type]
+
+    while (true) {
+        if (turn === 'attacker') {
+            if (attackerIdx >= attackerValues.length) break
+            opponentGained += currentPieceValue
+            currentPieceValue = attackerValues[attackerIdx]
+            attackerIdx++
+            turn = 'defender'
+        } else {
+            if (defenderIdx >= defenderValues.length) break
+            weGained += currentPieceValue
+            currentPieceValue = defenderValues[defenderIdx]
+            defenderIdx++
+            turn = 'attacker'
+        }
+    }
+
+    // If the opponent wins material by initiating the capture, it's a sacrifice.
+    return opponentGained - weGained > 0
 }
 
 async function getCloudEval(fen, multiPV) {
