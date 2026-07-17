@@ -310,23 +310,11 @@ function isSacrifice(afterFen, move) {
 
     const defenderValues = findAttackerValues(board, rankIndex, file, piece.color, { rankIndex, file })
 
-    // Separate King attackers, as Kings cannot be "traded" in the normal sense.
-    // A King attacking a defended piece doesn't mean the piece is hanging.
-    const nonKingAttackers = attackerValues.filter(v => v !== 2)
-    
-    let outnumbered = false
-    let badTrade = false
-
-    if (nonKingAttackers.length > 0) {
-        outnumbered = nonKingAttackers.length > defenderValues.length
-        badTrade = Math.min(...nonKingAttackers) < PIECE_VALUES[piece.type]
-    } else {
-        // If only Kings attack, it's only hanging if there are no defenders
-        outnumbered = attackerValues.length > defenderValues.length
-        badTrade = false
-    }
-
-    return outnumbered || badTrade
+    // It is only a sacrifice if the number of attackers exceeds the number of defenders.
+    // This correctly handles the King case:
+    // - King attacks (1), 0 defenders -> 1 > 0 = true (Sacrifice, King takes for free)
+    // - King attacks (1), 1 defender -> 1 > 1 = false (Not sacrifice, King cannot take)
+    return attackerValues.length > defenderValues.length
 }
 
 async function getCloudEval(fen, multiPV) {
