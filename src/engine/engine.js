@@ -1,10 +1,9 @@
 const LICHESS_TOKEN = import.meta.env.VITE_LICHESS_TOKEN
 
 let sf = null
-let sf11 = null
 let analysisId = 0
 let currentResolve = null
-let currentMultiPV = 3 // tracks what SF18 is currently configured for
+let currentMultiPV = 3
 
 // ---- Storage Keys -----------------------------------------------------
 const CLOUD_EVAL_STORAGE_KEY = 'chesserly_cloudEvalCache'
@@ -94,13 +93,14 @@ const STARTPOS_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 export async function startEngine() {
     return new Promise((resolve) => {
         sf = new Worker('/stockfish/stockfish-17.1-lite-single.js')
-        sf11 = new Worker('/stockfish/stockfish.js')
 
         const onMessage = (e) => {
             const msg = e.data
             if (msg === "uciok") {
                 sf.postMessage("setoption name MultiPV value 3")
                 currentMultiPV = 3
+                // SPEED HACK: Give Stockfish 64MB of Hash memory to remember transpositions!
+                sf.postMessage("setoption name Hash value 64")
                 sf.postMessage("isready")
             }
             if (msg === "readyok") {
@@ -110,18 +110,6 @@ export async function startEngine() {
         }
         sf.addEventListener("message", onMessage)
         sf.postMessage("uci")
-
-        const onMessage11 = (e) => {
-            const msg = e.data
-            if (msg === "uciok") {
-                sf11.postMessage("isready")
-            }
-            if (msg === "readyok") {
-                sf11.removeEventListener("message", onMessage11)
-            }
-        }
-        sf11.addEventListener("message", onMessage11)
-        sf11.postMessage("uci")
     })
 }
 
@@ -134,23 +122,18 @@ export function cancelAnalysis() {
     }
 
     sf.onmessage = null
-    sf11.onmessage = null
 
     return new Promise((resolve) => {
         const absorber = (e) => {
             if (typeof e.data === 'string' && e.data.startsWith('bestmove')) {
                 sf.removeEventListener('message', absorber)
-                sf11.removeEventListener('message', absorber)
                 resolve()
             }
         }
         sf.addEventListener('message', absorber)
         sf.postMessage('stop')
-        sf11.addEventListener('message', absorber)
-        sf11.postMessage('stop')
         setTimeout(() => {
             sf.removeEventListener('message', absorber)
-            sf11.removeEventListener('message', absorber)
             resolve()
         }, 100)
     })
@@ -302,11 +285,11 @@ async function getCloudEval(fen, multiPV) {
     }
 }
 
-function analyzePosition(moves, depth, onUpdate = null, runsf11 = false, multiPV = 3, rootFen = null) {
+function analyzePosition(moves, depth, onUpdate = null, multiPV = 3, rootFen = null) {
     const myId = analysisId
     const effectiveRoot = (rootFen && rootFen !== STARTPOS_FEN) ? rootFen : null
 
-    const cacheKey = `${effectiveRoot ?? 'startpos'}|${moves.join(",")}|${depth}|${multiPV}|${runsf11}`
+    const cacheKey = `${effectiveRoot ?? 'startpos'}|${moves.join(",")}|${depth}|${multiPV}`
     if (localEvalCache.has(cacheKey)) {
         const cachedResult = localEvalCache.get(cacheKey)
         if (onUpdate && cachedResult) {
@@ -321,7 +304,7 @@ function analyzePosition(moves, depth, onUpdate = null, runsf11 = false, multiPV
 
     return new Promise((resolve) => {
         currentResolve = resolve
-        let topMoves = [], evaluation = null, best11 = null
+        let topMoves = [], evaluation = null
 
         const rootSideIsWhite = effectiveRoot
             ? effectiveRoot.split(' ')[1] !== 'b'
@@ -329,15 +312,6 @@ function analyzePosition(moves, depth, onUpdate = null, runsf11 = false, multiPV
         const isBlackToMove = rootSideIsWhite
             ? (moves.length % 2 === 1)
             : (moves.length % 2 === 0)
-
-        sf11.onmessage = (i) => {
-            if (analysisId !== myId) return
-            const msg11 = i.data
-            if (msg11.startsWith('bestmove')) {
-                const m = msg11.match(/bestmove\s+(\S+)/)
-                if (m) best11 = m[1]
-            }
-        }
 
         sf.onmessage = (e) => {
             if (analysisId !== myId) return
@@ -382,38 +356,14 @@ function analyzePosition(moves, depth, onUpdate = null, runsf11 = false, multiPV
 
             if (msg.startsWith("bestmove")) {
                 sf.onmessage = null
-                const finish = () => {
-                    sf11.onmessage = null
-                    currentResolve = null
+                currentResolve = null
 
-                    const result = { evaluation, topMoves, best11, currentDepth: depth }
+                const result = { evaluation, topMoves, best11: null, currentDepth: depth }
+                localEvalCache.set(cacheKey, result)
+                localEvalDirty = true
+                schedulePersist()
 
-                    localEvalCache.set(cacheKey, result)
-                    localEvalDirty = true
-                    schedulePersist()
-
-                    resolve(result)
-                }
-
-                if (runsf11) {
-                    sf11.postMessage('stop')
-                    const waitForSf11 = new Promise((res) => {
-                        const onSf11Stop = (i) => {
-                            if (typeof i.data === 'string' && i.data.startsWith('bestmove')) {
-                                sf11.removeEventListener('message', onSf11Stop)
-                                res()
-                            }
-                        }
-                        sf11.addEventListener('message', onSf11Stop)
-                        setTimeout(() => {
-                            sf11.removeEventListener('message', onSf11Stop)
-                            res()
-                        }, 100)
-                    })
-                    waitForSf11.then(finish)
-                } else {
-                    finish()
-                }
+                resolve(result)
             }
         }
 
@@ -428,17 +378,13 @@ function analyzePosition(moves, depth, onUpdate = null, runsf11 = false, multiPV
 
         sf.postMessage(posCommand)
         sf.postMessage(`go depth ${depth}`)
-        if (runsf11) {
-            sf11.postMessage(posCommand)
-            sf11.postMessage(`go depth 9`)
-        }
     })
 }
 
-async function analyzeWithCloudFallback(fen, moves, depth, onUpdate, runsf11, multiPV, rootFen = null) {
+async function analyzeWithCloudFallback(fen, moves, depth, onUpdate, multiPV, rootFen = null) {
     const cloud = await getCloudEval(fen, multiPV)
     if (cloud) return cloud
-    return analyzePosition(moves, depth, onUpdate, runsf11, multiPV, rootFen)
+    return analyzePosition(moves, depth, onUpdate, multiPV, rootFen)
 }
 
 export async function getEvaluation(move, movesList, depth, onUpdate = null, beforeFen = null, afterFen = null, rootFen = null, multiPV = 3) {
@@ -446,8 +392,8 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
     const hasCustomRoot = !!(rootFen && rootFen !== STARTPOS_FEN)
 
     const beforePromise = beforeFen
-        ? analyzeWithCloudFallback(beforeFen, movesList, 10, null, true, 2, rootFen) 
-        : analyzePosition(movesList, 10, null, true, 2, rootFen) 
+        ? analyzeWithCloudFallback(beforeFen, movesList, 10, null, 2, rootFen)
+        : analyzePosition(movesList, 10, null, 2, rootFen)
 
     const [isBook, before] = await Promise.all([
         isBookMove(movesList, move, hasCustomRoot),
@@ -458,7 +404,6 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
 
     const eval_before = before.evaluation
     const top_moves = before.topMoves || []
-    const best11 = before.best11 ?? null
     const best_move = top_moves[0]?.Move ?? ""
     const second_best_eval = top_moves.length >= 2
         ? (top_moves[1]?.Centipawn ?? 0)
@@ -492,11 +437,18 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
         if (move) {
             if (isBook) {
                 accuracy = "book"
-            } else if (best_move === move && top_moves.length >= 2 && brilliant_loss > 150 && best11 !== null && best11 !== best_move) {
-                accuracy = "brilliant"
-            } else if (best_move === move && top_moves.length >= 2 && brilliant_loss > 150) {
-                accuracy = "great"
-            } else if (best_move == move || loss < 15) {
+            } else if (best_move === move && top_moves.length >= 2) {
+                // NEW BRILLIANT LOGIC (Without SF11)
+                // If the best move is >2.0 pawns better than the 2nd best, it's brilliant.
+                // If it's >1.0 pawn better, it's great.
+                if (brilliant_loss > 200) {
+                    accuracy = "brilliant"
+                } else if (brilliant_loss > 100) {
+                    accuracy = "great"
+                } else {
+                    accuracy = "best"
+                }
+            } else if (best_move === move || loss < 15) {
                 accuracy = "best"
             } else if (loss < 40) {
                 accuracy = "excellent"
@@ -518,7 +470,7 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
 
             if (moverDeliversMate) {
                 if (best_move === move && top_moves.length >= 2 && top_moves[1]?.score?.type !== "mate") {
-                    accuracy = (best11 !== null && best11 !== best_move) ? "brilliant" : "great"
+                    accuracy = "brilliant"
                 }
             } else if (eval_before?.type === "cp") {
                 const alreadyLostBig = moverIsWhite ? eval_before.value <= -700 : eval_before.value >= 700
@@ -609,7 +561,6 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
             afterMoves,
             depth,
             onUpdate ? (data) => onUpdate(buildResult(data.evaluation, data.topMoves, data.currentDepth)) : null,
-            false,
             multiPV,
             rootFen
         )
