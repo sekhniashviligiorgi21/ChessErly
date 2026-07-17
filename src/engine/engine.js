@@ -99,7 +99,6 @@ export async function startEngine() {
             if (msg === "uciok") {
                 sf.postMessage("setoption name MultiPV value 3")
                 currentMultiPV = 3
-                // SPEED HACK: Give Stockfish 64MB of Hash memory to remember transpositions!
                 sf.postMessage("setoption name Hash value 64")
                 sf.postMessage("isready")
             }
@@ -217,15 +216,8 @@ function normalizeLine(line) {
 }
 
 // ---- Sacrifice Detection -------------------------------------------------
-// A move counts as a "sacrifice" if, on the position right after it's played,
-// the piece that just moved is worse off than it should be: either more
-// opponent pieces attack it than the mover has defending it, or the cheapest
-// attacker is worth less than the piece itself (so even after a recapture,
-// the opponent nets material). This is a static look at the board — no
-// lookahead — and the king is excluded on both sides since it isn't
-// material that can be "won". Pins/legality of recaptures aren't accounted
-// for, so this is a heuristic, not a full exchange evaluation.
 const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9 }
+const ATTACKER_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 2 } // King is valued at 2
 
 function parseFenBoard(fen) {
     return fen.split(' ')[0].split('/').map((row) => {
@@ -244,7 +236,7 @@ function parseFenBoard(fen) {
 function squareToIndices(square) {
     const file = square.charCodeAt(0) - 'a'.charCodeAt(0)
     const rank = Number(square[1])
-    return { rankIndex: 8 - rank, file } // rankIndex 0 = rank 8 ... 7 = rank 1
+    return { rankIndex: 8 - rank, file }
 }
 
 const KNIGHT_OFFSETS = [[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]]
@@ -254,19 +246,21 @@ const SLIDING_DIRECTIONS = {
     q: [[-1, -1], [-1, 1], [1, -1], [1, 1], [-1, 0], [1, 0], [0, -1], [0, 1]],
 }
 
-// Pseudo-legal only: ignores whose turn it is, pins, and check.
-// That's intentional here — we want raw "can this piece reach that square",
-// not a legal-move check.
 function pieceAttacksSquare(board, fromRank, fromFile, toRank, toFile, piece) {
     const dr = toRank - fromRank
     const df = toFile - fromFile
+
+    if (piece.type === 'k') {
+        // King attacks 1 square in any direction
+        return Math.abs(dr) <= 1 && Math.abs(df) <= 1 && (dr !== 0 || df !== 0)
+    }
 
     if (piece.type === 'n') {
         return KNIGHT_OFFSETS.some(([or, of]) => or === dr && of === df)
     }
 
     if (piece.type === 'p') {
-        const dir = piece.color === 'w' ? -1 : 1 // white attacks toward rank 8 (lower rankIndex)
+        const dir = piece.color === 'w' ? -1 : 1
         return dr === dir && Math.abs(df) === 1
     }
 
@@ -275,14 +269,14 @@ function pieceAttacksSquare(board, fromRank, fromFile, toRank, toFile, piece) {
             let r = fromRank + dR, f = fromFile + dF
             while (r >= 0 && r < 8 && f >= 0 && f < 8) {
                 if (r === toRank && f === toFile) return true
-                if (board[r][f]) break // blocked by any piece, friend or foe
+                if (board[r][f]) break
                 r += dR
                 f += dF
             }
         }
     }
 
-    return false // king intentionally excluded
+    return false
 }
 
 function findAttackerValues(board, targetRank, targetFile, attackerColor, excludeSquare = null) {
@@ -291,9 +285,9 @@ function findAttackerValues(board, targetRank, targetFile, attackerColor, exclud
         for (let f = 0; f < 8; f++) {
             if (excludeSquare && r === excludeSquare.rankIndex && f === excludeSquare.file) continue
             const piece = board[r][f]
-            if (!piece || piece.color !== attackerColor || !PIECE_VALUES[piece.type]) continue
+            if (!piece || piece.color !== attackerColor || !ATTACKER_VALUES[piece.type]) continue
             if (pieceAttacksSquare(board, r, f, targetRank, targetFile, piece)) {
-                values.push(PIECE_VALUES[piece.type])
+                values.push(ATTACKER_VALUES[piece.type])
             }
         }
     }
@@ -306,7 +300,9 @@ function isSacrifice(afterFen, move) {
     const board = parseFenBoard(afterFen)
     const { rankIndex, file } = squareToIndices(move.slice(2, 4))
     const piece = board[rankIndex][file]
-    if (!piece || !PIECE_VALUES[piece.type]) return false // empty square, or a king — not material
+    
+    // Exclude empty squares, kings, and PAWNS from being considered the sacrificed piece
+    if (!piece || !PIECE_VALUES[piece.type] || piece.type === 'p') return false
 
     const opponentColor = piece.color === 'w' ? 'b' : 'w'
     const attackerValues = findAttackerValues(board, rankIndex, file, opponentColor)
@@ -314,8 +310,21 @@ function isSacrifice(afterFen, move) {
 
     const defenderValues = findAttackerValues(board, rankIndex, file, piece.color, { rankIndex, file })
 
-    const outnumbered = attackerValues.length > defenderValues.length
-    const badTrade = Math.min(...attackerValues) < PIECE_VALUES[piece.type]
+    // Separate King attackers, as Kings cannot be "traded" in the normal sense.
+    // A King attacking a defended piece doesn't mean the piece is hanging.
+    const nonKingAttackers = attackerValues.filter(v => v !== 2)
+    
+    let outnumbered = false
+    let badTrade = false
+
+    if (nonKingAttackers.length > 0) {
+        outnumbered = nonKingAttackers.length > defenderValues.length
+        badTrade = Math.min(...nonKingAttackers) < PIECE_VALUES[piece.type]
+    } else {
+        // If only Kings attack, it's only hanging if there are no defenders
+        outnumbered = attackerValues.length > defenderValues.length
+        badTrade = false
+    }
 
     return outnumbered || badTrade
 }
@@ -544,14 +553,9 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
             if (isBook) {
                 accuracy = "book"
             } else if (best_move === move && top_moves.length >= 2) {
-                // "Only best move" — kept from the original brilliant_loss check:
-                // the played move has to be clearly ahead of every alternative.
                 const isOnlyBestMove = brilliant_loss > 200
 
                 if (isOnlyBestMove) {
-                    // Brilliant now requires BOTH: it's the only good move here,
-                    // AND the piece that just moved is hanging or trading down.
-                    // Being uniquely best alone just makes it "great".
                     is_sacrifice = isSacrifice(afterFen, move)
                     accuracy = is_sacrifice ? "brilliant" : "great"
                 } else if (brilliant_loss > 100) {
