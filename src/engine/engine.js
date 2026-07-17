@@ -7,13 +7,11 @@ let currentMultiPV = 3
 
 // ---- Storage Keys -----------------------------------------------------
 const CLOUD_EVAL_STORAGE_KEY = 'chesserly_cloudEvalCache'
-const BOOK_MOVE_STORAGE_KEY = 'chesserly_bookMoveCache'
 const LOCAL_EVAL_STORAGE_KEY = 'chesserly_localEvalCache'
 const MAX_CACHE_ENTRIES = 1500
 
 // ---- Cache Dirty Flags ------------------------------------------------
 let cloudEvalDirty = false
-let bookMoveDirty = false
 let localEvalDirty = false
 let persistTimer = null
 const PERSIST_DEBOUNCE_MS = 1000
@@ -52,10 +50,6 @@ function schedulePersist() {
             saveCacheToStorage(CLOUD_EVAL_STORAGE_KEY, cloudEvalCache)
             cloudEvalDirty = false
         }
-        if (bookMoveDirty) {
-            saveCacheToStorage(BOOK_MOVE_STORAGE_KEY, bookMoveCache)
-            bookMoveDirty = false
-        }
         if (localEvalDirty) {
             saveCacheToStorage(LOCAL_EVAL_STORAGE_KEY, localEvalCache)
             localEvalDirty = false
@@ -64,10 +58,9 @@ function schedulePersist() {
 }
 
 const cloudEvalCache = loadCacheFromStorage(CLOUD_EVAL_STORAGE_KEY)
-const bookMoveCache = loadCacheFromStorage(BOOK_MOVE_STORAGE_KEY)
 const localEvalCache = loadCacheFromStorage(LOCAL_EVAL_STORAGE_KEY)
 
-// ---- 429 backoff --------------------------------------------------------
+// ---- 429 backoff (for Cloud Eval only) --------------------------------
 const LICHESS_COOLDOWN_MS = 60_000
 let lichessCooldownUntil = 0
 
@@ -101,8 +94,59 @@ export function resetCloudEvalState() {
 
 const STARTPOS_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 
+// ---- Local Opening Book -----------------------------------------------
+// Loaded once from a static JSON file. The file is an array of opening
+// lines, each line being an array of UCI moves. From those lines we
+// build a Map: positionPrefix (comma-joined UCI moves before the move)
+// -> Set of UCI moves considered "book" at that position.
+let openingBookMap = new Map()
+let openingBookLoaded = false
+
+export async function loadOpeningBook(url = '/book/openings.json') {
+    if (openingBookLoaded) return
+    try {
+        const response = await fetch(url)
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const data = await response.json()
+
+        openingBookMap = new Map()
+
+        // Format A: array of arrays of UCI moves (one entry per opening line)
+        if (Array.isArray(data)) {
+            for (const line of data) {
+                if (!Array.isArray(line)) continue
+                for (let i = 0; i < line.length; i++) {
+                    const prefix = line.slice(0, i).join(',')
+                    const mv = line[i]
+                    if (!openingBookMap.has(prefix)) openingBookMap.set(prefix, new Set())
+                    openingBookMap.get(prefix).add(mv)
+                }
+            }
+        }
+        // Format B: { "e2e4,e7e5": ["g1f3","b1c3", ...], ... }
+        else if (data && typeof data === 'object') {
+            for (const [key, moves] of Object.entries(data)) {
+                if (Array.isArray(moves)) openingBookMap.set(key, new Set(moves))
+            }
+        }
+
+        openingBookLoaded = true
+    } catch (error) {
+        console.warn('Failed to load opening book:', error)
+        openingBookMap = new Map()
+        openingBookLoaded = true
+    }
+}
+
+export function isOpeningBookLoaded() {
+    return openingBookLoaded && openingBookMap.size > 0
+}
+
 export async function startEngine() {
-    return new Promise((resolve) => {
+    // Kick off book loading in parallel with engine boot so neither blocks the other.
+    const bookPromise = loadOpeningBook()
+
+    await new Promise((resolve) => {
         sf = new Worker('/stockfish/stockfish-17.1-lite-single.js')
 
         const onMessage = (e) => {
@@ -121,6 +165,9 @@ export async function startEngine() {
         sf.addEventListener("message", onMessage)
         sf.postMessage("uci")
     })
+
+    // Make sure the book is ready before analyses begin.
+    await bookPromise
 }
 
 export function cancelAnalysis() {
@@ -149,66 +196,16 @@ export function cancelAnalysis() {
     })
 }
 
-const outOfBookPrefixes = new Set()
-
-function isPositionOutOfBook(movesList) {
-    const joined = movesList.join(",")
-    for (const prefix of outOfBookPrefixes) {
-        if (joined === prefix || joined.startsWith(prefix + ",")) return true
-    }
-    return false
-}
-
-async function isBookMove(movesList, move, hasCustomRoot = false) {
+// ---- Book Move Lookup (Local) -----------------------------------------
+function isBookMove(movesList, move, hasCustomRoot = false) {
     if (hasCustomRoot) return false
-    if (isLichessOnCooldown()) return false
-    if (isPositionOutOfBook(movesList)) return false
+    if (!openingBookLoaded || openingBookMap.size === 0) return false
 
-    const key = `${movesList.join(",")}|${move}`
-    if (bookMoveCache.has(key)) {
-        return bookMoveCache.get(key)
-    }
-
-    const bookList = movesList.join(",")
-    const url = bookList
-        ? `https://explorer.lichess.ovh/masters?play=${bookList}`
-        : `https://explorer.lichess.ovh/masters`
-
-    try {
-        const response = await fetch(url, {
-            headers: {
-                'Authorization': `Bearer ${LICHESS_TOKEN}`,
-                'Accept': 'application/json'
-            }
-        })
-
-        if (response.status === 429) {
-            enterLichessCooldown()
-            return false
-        }
-
-        if (!response.ok) {
-            bookMoveCache.set(key, false)
-            bookMoveDirty = true
-            schedulePersist()
-            return false
-        }
-
-        const data = await response.json()
-        const result = data.moves ? data.moves.some(m => m.uci === move) : false
-        bookMoveCache.set(key, result)
-        bookMoveDirty = true
-        schedulePersist()
-
-        if (!result) {
-            outOfBookPrefixes.add([...movesList, move].join(","))
-        }
-
-        return result
-    } catch (error) {
-        console.warn("Lichess book API fetch failed:", error)
-        return false
-    }
+    // Position key = comma-joined UCI moves BEFORE the candidate move
+    const key = movesList.join(',')
+    const bookMoves = openingBookMap.get(key)
+    if (!bookMoves) return false
+    return bookMoves.has(move)
 }
 
 const CASTLING_UCI_960_TO_STANDARD = {
@@ -655,10 +652,8 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
         ? analyzeWithCloudFallback(beforeFen, movesList, 10, null, 2, rootFen)
         : analyzePosition(movesList, 10, null, 2, rootFen)
 
-    const [isBook, before] = await Promise.all([
-        isBookMove(movesList, move, hasCustomRoot),
-        beforePromise
-    ])
+    const isBook = isBookMove(movesList, move, hasCustomRoot)
+    const before = await beforePromise
 
     if (analysisId !== myId || !before) return null
 
