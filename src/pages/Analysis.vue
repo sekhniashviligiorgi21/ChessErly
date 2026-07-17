@@ -611,7 +611,12 @@
     await cancelAnalysis() 
     
     const cached = currentNode.value.analysisData
-    if (cached && cached.depth >= targetDepth.value) {
+    // We require 3 lines for manual review (unless it's the root node which has no moves)
+    const requiresMultiPV3 = !isImporting.value
+    const hasRequiredMultiPV = !requiresMultiPV3 || !currentNode.value.san || (cached?.topMoves?.length >= 3)
+
+    // 1. If we have a full cache (3 lines), use it and stop.
+    if (cached && cached.depth >= targetDepth.value && hasRequiredMultiPV) {
       moveData.value = cached
       lastMoveSquare.value = movesListUCI.value.at(-1)?.slice(2, 4) ?? null
       lastMoveAccuracy.value = cached.move_accuracy
@@ -631,6 +636,24 @@
       return 
     }
 
+    // 2. If we have a partial cache (from MultiPV 1 import), display it immediately!
+    if (cached && !hasRequiredMultiPV) {
+      moveData.value = cached
+      lastMoveSquare.value = movesListUCI.value.at(-1)?.slice(2, 4) ?? null
+      lastMoveAccuracy.value = cached.move_accuracy
+      currentDepth.value = cached.depth
+      
+      if (typeof evalSize === "function") evalSize()
+      if (typeof moveDescription === "function") moveDescription()
+      if (typeof sanBest === "function") sanBest()
+      if (typeof uciSecondLine === "function") uciSecondLine()
+      if (typeof uciThirdLine === "function") uciThirdLine()
+      if (typeof uciLine === "function") uciLine()
+      drawBestArrow()
+      // Do not return! Fall through to the engine call to upgrade it to MultiPV 3
+    }
+
+    // 3. Calculate with the correct MultiPV
     isAnalyzing.value = true
     bestArrowSquares.value = null
     if (showBestArrow.value && boardAPI.value) boardAPI.value.hideMoves()
