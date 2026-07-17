@@ -1,5 +1,3 @@
-import { Chess } from 'chess.js'
-
 const LICHESS_TOKEN = import.meta.env.VITE_LICHESS_TOKEN
 
 let sf = null
@@ -219,63 +217,107 @@ function normalizeLine(line) {
 }
 
 // ---- Sacrifice Detection -------------------------------------------------
-// A move is treated as a "sacrifice" if, once the engine's own predicted
-// continuation is played out a few plies deep, the side that made the move
-// ends up down material compared to before the move — i.e. material was
-// given up and hasn't (yet) come back. We can't tell this from the single
-// before/after FEN alone, because a hung piece only shows up as a material
-// loss once the opponent actually takes it — so we walk forward through the
-// engine's own PV (which your pipeline already computes as `best_line`).
-const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 }
-const SACRIFICE_MATERIAL_THRESHOLD = 2 // an exchange or more, given up for no immediate return
-const SACRIFICE_SETTLE_PLIES = 6       // how far into the engine's line to walk before judging
+// A move counts as a "sacrifice" if, on the position right after it's played,
+// the piece that just moved is worse off than it should be: either more
+// opponent pieces attack it than the mover has defending it, or the cheapest
+// attacker is worth less than the piece itself (so even after a recapture,
+// the opponent nets material). This is a static look at the board — no
+// lookahead — and the king is excluded on both sides since it isn't
+// material that can be "won". Pins/legality of recaptures aren't accounted
+// for, so this is a heuristic, not a full exchange evaluation.
+const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9 }
 
-function materialBalance(fen, moverIsWhite) {
-    const board = fen.split(' ')[0]
-    let white = 0, black = 0
-    for (const ch of board) {
-        if (ch === '/' || /\d/.test(ch)) continue
-        const value = PIECE_VALUES[ch.toLowerCase()] || 0
-        if (ch === ch.toUpperCase()) white += value
-        else black += value
-    }
-    return moverIsWhite ? (white - black) : (black - white)
+function parseFenBoard(fen) {
+    return fen.split(' ')[0].split('/').map((row) => {
+        const cells = []
+        for (const ch of row) {
+            if (/\d/.test(ch)) {
+                for (let i = 0; i < Number(ch); i++) cells.push(null)
+            } else {
+                cells.push({ type: ch.toLowerCase(), color: ch === ch.toUpperCase() ? 'w' : 'b' })
+            }
+        }
+        return cells
+    })
 }
 
-function applyLineAndGetFen(startFen, uciLine, maxPlies) {
-    let chess
-    try {
-        chess = new Chess(startFen)
-    } catch (error) {
-        return startFen
+function squareToIndices(square) {
+    const file = square.charCodeAt(0) - 'a'.charCodeAt(0)
+    const rank = Number(square[1])
+    return { rankIndex: 8 - rank, file } // rankIndex 0 = rank 8 ... 7 = rank 1
+}
+
+const KNIGHT_OFFSETS = [[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]]
+const SLIDING_DIRECTIONS = {
+    b: [[-1, -1], [-1, 1], [1, -1], [1, 1]],
+    r: [[-1, 0], [1, 0], [0, -1], [0, 1]],
+    q: [[-1, -1], [-1, 1], [1, -1], [1, 1], [-1, 0], [1, 0], [0, -1], [0, 1]],
+}
+
+// Pseudo-legal only: ignores whose turn it is, pins, and check.
+// That's intentional here — we want raw "can this piece reach that square",
+// not a legal-move check.
+function pieceAttacksSquare(board, fromRank, fromFile, toRank, toFile, piece) {
+    const dr = toRank - fromRank
+    const df = toFile - fromFile
+
+    if (piece.type === 'n') {
+        return KNIGHT_OFFSETS.some(([or, of]) => or === dr && of === df)
     }
 
-    for (const uci of (uciLine || []).slice(0, maxPlies)) {
-        const from = uci.slice(0, 2)
-        const to = uci.slice(2, 4)
-        const promotion = uci.length > 4 ? uci.slice(4).toLowerCase() : undefined
-        try {
-            const result = chess.move({ from, to, promotion })
-            if (!result) break
-        } catch (error) {
-            break
+    if (piece.type === 'p') {
+        const dir = piece.color === 'w' ? -1 : 1 // white attacks toward rank 8 (lower rankIndex)
+        return dr === dir && Math.abs(df) === 1
+    }
+
+    if (SLIDING_DIRECTIONS[piece.type]) {
+        for (const [dR, dF] of SLIDING_DIRECTIONS[piece.type]) {
+            let r = fromRank + dR, f = fromFile + dF
+            while (r >= 0 && r < 8 && f >= 0 && f < 8) {
+                if (r === toRank && f === toFile) return true
+                if (board[r][f]) break // blocked by any piece, friend or foe
+                r += dR
+                f += dF
+            }
         }
     }
-    return chess.fen()
+
+    return false // king intentionally excluded
 }
 
-function isSacrifice(beforeFen, afterFen, moverIsWhite, continuationLine) {
-    if (!beforeFen || !afterFen) return false
+function findAttackerValues(board, targetRank, targetFile, attackerColor, excludeSquare = null) {
+    const values = []
+    for (let r = 0; r < 8; r++) {
+        for (let f = 0; f < 8; f++) {
+            if (excludeSquare && r === excludeSquare.rankIndex && f === excludeSquare.file) continue
+            const piece = board[r][f]
+            if (!piece || piece.color !== attackerColor || !PIECE_VALUES[piece.type]) continue
+            if (pieceAttacksSquare(board, r, f, targetRank, targetFile, piece)) {
+                values.push(PIECE_VALUES[piece.type])
+            }
+        }
+    }
+    return values
+}
 
-    const balanceBefore = materialBalance(beforeFen, moverIsWhite)
+function isSacrifice(afterFen, move) {
+    if (!afterFen || !move) return false
 
-    const settledFen = (continuationLine && continuationLine.length)
-        ? applyLineAndGetFen(afterFen, continuationLine, SACRIFICE_SETTLE_PLIES)
-        : afterFen
+    const board = parseFenBoard(afterFen)
+    const { rankIndex, file } = squareToIndices(move.slice(2, 4))
+    const piece = board[rankIndex][file]
+    if (!piece || !PIECE_VALUES[piece.type]) return false // empty square, or a king — not material
 
-    const balanceAfter = materialBalance(settledFen, moverIsWhite)
+    const opponentColor = piece.color === 'w' ? 'b' : 'w'
+    const attackerValues = findAttackerValues(board, rankIndex, file, opponentColor)
+    if (attackerValues.length === 0) return false // nothing attacks it — not hanging
 
-    return (balanceBefore - balanceAfter) >= SACRIFICE_MATERIAL_THRESHOLD
+    const defenderValues = findAttackerValues(board, rankIndex, file, piece.color, { rankIndex, file })
+
+    const outnumbered = attackerValues.length > defenderValues.length
+    const badTrade = Math.min(...attackerValues) < PIECE_VALUES[piece.type]
+
+    return outnumbered || badTrade
 }
 
 async function getCloudEval(fen, multiPV) {
@@ -508,9 +550,9 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
 
                 if (isOnlyBestMove) {
                     // Brilliant now requires BOTH: it's the only good move here,
-                    // AND it gives up material to get there. Being uniquely best
-                    // alone just makes it "great".
-                    is_sacrifice = isSacrifice(beforeFen, afterFen, side_to_move === "w", best_line)
+                    // AND the piece that just moved is hanging or trading down.
+                    // Being uniquely best alone just makes it "great".
+                    is_sacrifice = isSacrifice(afterFen, move)
                     accuracy = is_sacrifice ? "brilliant" : "great"
                 } else if (brilliant_loss > 100) {
                     accuracy = "great"
