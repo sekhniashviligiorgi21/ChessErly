@@ -251,7 +251,6 @@ function pieceAttacksSquare(board, fromRank, fromFile, toRank, toFile, piece) {
     const df = toFile - fromFile
 
     if (piece.type === 'k') {
-        // King attacks 1 square in any direction
         return Math.abs(dr) <= 1 && Math.abs(df) <= 1 && (dr !== 0 || df !== 0)
     }
 
@@ -305,16 +304,27 @@ function isSacrifice(afterFen, move) {
     if (!piece || !PIECE_VALUES[piece.type] || piece.type === 'p') return false
 
     const opponentColor = piece.color === 'w' ? 'b' : 'w'
-    const attackerValues = findAttackerValues(board, rankIndex, file, opponentColor)
+    let attackerValues = findAttackerValues(board, rankIndex, file, opponentColor)
     if (attackerValues.length === 0) return false // nothing attacks it — not hanging
 
     const defenderValues = findAttackerValues(board, rankIndex, file, piece.color, { rankIndex, file })
 
-    // It is only a sacrifice if the number of attackers exceeds the number of defenders.
-    // This correctly handles the King case:
-    // - King attacks (1), 0 defenders -> 1 > 0 = true (Sacrifice, King takes for free)
-    // - King attacks (1), 1 defender -> 1 > 1 = false (Not sacrifice, King cannot take)
-    return attackerValues.length > defenderValues.length
+    // KING LOGIC FIX: 
+    // If the piece is defended, the opponent's King legally cannot take it.
+    // So we filter the King (value 2) OUT of the attackers list if there are defenders.
+    if (defenderValues.length > 0) {
+        attackerValues = attackerValues.filter(v => v !== 2)
+    }
+
+    // If the King was the only attacker, and it was filtered out, it's not a sacrifice.
+    if (attackerValues.length === 0) return false
+
+    // It is a sacrifice if the attackers outnumber the defenders, 
+    // OR if the cheapest attacker is worth less than the piece (a bad trade).
+    const outnumbered = attackerValues.length > defenderValues.length
+    const badTrade = Math.min(...attackerValues) < PIECE_VALUES[piece.type]
+
+    return outnumbered || badTrade
 }
 
 async function getCloudEval(fen, multiPV) {
