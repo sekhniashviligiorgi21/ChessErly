@@ -667,7 +667,9 @@
       },
       beforeFen,
       afterFen,
-      moveTree.fen
+      moveTree.fen,
+      // Use MultiPV 1 during bulk import, MultiPV 3 during manual review
+      isImporting.value ? 1 : 3 
     )
   }
 
