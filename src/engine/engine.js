@@ -532,6 +532,98 @@ async function analyzeWithCloudFallback(fen, moves, depth, onUpdate, multiPV, ro
     return analyzePosition(moves, depth, onUpdate, multiPV, rootFen)
 }
 
+// ---- Brilliant Move Logic Helpers --------------------------------------
+/**
+ * Convert a score (cp or mate) to a comparable centipawn value.
+ * All scores are treated as from White's perspective (positive = White better).
+ * Mate in 1 ≈ +9900, getting mated in 1 ≈ -9900, etc.
+ */
+function scoreToCpComparable(score) {
+    if (!score) return 0
+    if (score.type === 'cp') return score.value
+    if (score.type === 'mate') {
+        const mateIn = Math.abs(score.value)
+        return score.value > 0
+            ? (10000 - mateIn * 100)
+            : (-10000 + mateIn * 100)
+    }
+    return 0
+}
+
+/**
+ * Check whether a move qualifies as "brilliant" against every criterion.
+ */
+function checkBrilliant({
+    move,
+    best_move,
+    top_moves,
+    isBook,
+    eval_before,
+    eval_after,
+    side_to_move,
+    movesList,
+    is_sacrifice,
+}) {
+    const moverIsWhite = side_to_move === 'w'
+
+    // 1. Best move
+    if (best_move !== move) return false
+
+    // 3. Not an opening move
+    if (isBook) return false
+
+    if (!top_moves || top_moves.length < 2) return false
+    if (!top_moves[0]?.score || !top_moves[1]?.score) return false
+
+    // 2. Unique best (>= 180 cp gap)
+    const bestCp    = scoreToCpComparable(top_moves[0].score)
+    const secondCp  = scoreToCpComparable(top_moves[1].score)
+    const uniquenessGap = moverIsWhite
+        ? (bestCp - secondCp)
+        : (secondCp - bestCp)
+    if (uniquenessGap < 180) return false
+
+    // 4. Not a forced mate already
+    if (eval_before?.type === 'mate') return false
+
+    // 5 & 6. Not already winning (+5) or losing (-5)
+    if (eval_before?.type !== 'cp') return false
+    if (Math.abs(eval_before.value) >= 500) return false
+
+    // 7. Involves giving up N / B / R / Q
+    if (!is_sacrifice) return false
+
+    // 8. Opponent can legally capture it
+    // (isSacrifice() verifies attackers exist & SEE favors opponent)
+
+    // 9. Best capture doesn't ruin evaluation
+    if (eval_after?.type === 'mate') {
+        const moverHasMate = moverIsWhite ? eval_after.value > 0 : eval_after.value < 0
+        if (!moverHasMate) return false
+    } else if (eval_after?.type === 'cp') {
+        if (moverIsWhite) {
+            if (eval_after.value < -200) return false
+            if (eval_after.value < eval_before.value - 150) return false
+        } else {
+            if (eval_after.value > 200) return false
+            if (eval_after.value > eval_before.value + 150) return false
+        }
+    } else {
+        return false
+    }
+
+    // 10. Improves activity / attack / king safety
+    // (Implied by 2 + 7 + 9)
+
+    // 11. Not simply recapturing
+    if (movesList && movesList.length > 0) {
+        const opponentLastMove = movesList[movesList.length - 1]
+        if (opponentLastMove.slice(2, 4) === move.slice(2, 4)) return false
+    }
+
+    return true
+}
+
 export async function getEvaluation(move, movesList, depth, onUpdate = null, beforeFen = null, afterFen = null, rootFen = null, multiPV = 3) {
     const myId = analysisId
     const hasCustomRoot = !!(rootFen && rootFen !== STARTPOS_FEN)
@@ -550,9 +642,11 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
     const eval_before = before.evaluation
     const top_moves = before.topMoves || []
     const best_move = top_moves[0]?.Move ?? ""
-    const second_best_eval = top_moves.length >= 2
-        ? (top_moves[1]?.Centipawn ?? 0)
-        : (top_moves[0]?.Centipawn ?? 0)
+    
+    // Use comparable cp for uniqueness gap calculation
+    const second_best_cp = top_moves.length >= 2
+        ? scoreToCpComparable(top_moves[1]?.score)
+        : scoreToCpComparable(top_moves[0]?.score)
 
     const afterMoves = move ? [...movesList, move] : movesList
 
@@ -570,10 +664,10 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
         if (eval_before?.type === "cp" && eval_after?.type === "cp") {
             if (side_to_move === "w") {
                 loss = eval_before.value - eval_after.value
-                brilliant_loss = eval_after.value - second_best_eval
+                brilliant_loss = eval_after.value - second_best_cp
             } else {
                 loss = eval_after.value - eval_before.value
-                brilliant_loss = second_best_eval - eval_after.value
+                brilliant_loss = second_best_cp - eval_after.value
             }
             loss = Math.max(0, loss)
         }
@@ -585,12 +679,30 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
             if (isBook) {
                 accuracy = "book"
             } else if (best_move === move && top_moves.length >= 2) {
-                const isOnlyBestMove = brilliant_loss > 200
+                is_sacrifice = isSacrifice(beforeFen, afterFen, move)
 
-                if (isOnlyBestMove) {
-                    is_sacrifice = isSacrifice(beforeFen, afterFen, move)
-                    accuracy = is_sacrifice ? "brilliant" : "great"
-                } else if (brilliant_loss > 100) {
+                const moverIsWhite = side_to_move === "w"
+                const bestCp   = scoreToCpComparable(top_moves[0]?.score)
+                const secondCp = scoreToCpComparable(top_moves[1]?.score)
+                const uniquenessGap = moverIsWhite
+                    ? (bestCp - secondCp)
+                    : (secondCp - bestCp)
+
+                const isBrilliant = checkBrilliant({
+                    move,
+                    best_move,
+                    top_moves,
+                    isBook,
+                    eval_before,
+                    eval_after,
+                    side_to_move,
+                    movesList,
+                    is_sacrifice,
+                })
+
+                if (isBrilliant) {
+                    accuracy = "brilliant"
+                } else if (uniquenessGap > 100) {
                     accuracy = "great"
                 } else {
                     accuracy = "best"
@@ -616,8 +728,11 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
             const moverDeliversMate = moverIsWhite ? eval_after.value > 0 : eval_after.value < 0
 
             if (moverDeliversMate) {
-                if (best_move === move && top_moves.length >= 2 && top_moves[1]?.score?.type !== "mate") {
-                    accuracy = "brilliant"
+                if (accuracy !== "brilliant" &&
+                    best_move === move &&
+                    topMovesAfter.length >= 2 &&
+                    topMovesAfter[1]?.score?.type !== "mate") {
+                    accuracy = "great"
                 }
             } else if (eval_before?.type === "cp") {
                 const alreadyLostBig = moverIsWhite ? eval_before.value <= -700 : eval_before.value >= 700
