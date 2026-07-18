@@ -10,7 +10,7 @@
 
 <style>
 
-  :root, [data-theme="brown"] {
+  [data-theme="brown"] {
     --bg-1: #4b2e12; --bg-2: #6f4518; --bg-3: #7f4f24;
     --panel-1: #8B5A32; --panel-2: #6D4524;
     --list-1: #a57548; --list-2: #7d5530;
@@ -21,7 +21,7 @@
     --board-light: #e8d9b5; --board-dark: #b58863;
   }
 
-  [data-theme="midnight"] {
+  :root, [data-theme="midnight"] {
     --bg-1: #000000; --bg-2: #111111; --bg-3: #222222;
     --panel-1: #1a1a1a; --panel-2: #0a0a0a;
     --list-1: #2a2a2a; --list-2: #1a1a1a;

@@ -20,12 +20,12 @@
 
   // Added structured themes for the dropdown
   const themes = [
+    { value: 'midnight', label: 'Midnight Dark' },
     { value: 'brown', label: 'Classic Brown' },
     { value: 'wood', label: 'Dark Wood' },
     { value: 'blue', label: 'Ocean Blue' },
     { value: 'purple', label: 'Amethyst' },
     { value: 'green', label: 'Forest Green' },
-    { value: 'midnight', label: 'Midnight Dark' },
     { value: 'slate', label: 'Cool Slate' },
     { value: 'cherry', label: 'Deep Cherry' }
   ]
