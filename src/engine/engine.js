@@ -147,7 +147,7 @@ export async function startEngine() {
     const bookPromise = loadOpeningBook()
 
     await new Promise((resolve) => {
-        sf = new Worker('/stockfish/stockfish-18-lite-single.js')
+        sf = new Worker('/stockfish/stockfish-17.1-lite-single.js')
 
         const onMessage = (e) => {
             const msg = e.data
