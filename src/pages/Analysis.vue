@@ -1130,7 +1130,8 @@
       pendingGameMeta = {
         white: newQuery.white || 'White',
         black: newQuery.black || 'Black',
-        pgn: newQuery.pgn || null 
+        pgn: newQuery.pgn || null,
+        myColor: newQuery.myColor || null
       }
     } else {
       pendingGameMeta = null
