@@ -729,12 +729,6 @@
   }
 
   function formatEval(evalObj) {
-    // Check if we are at the end of a reviewed game with a known result
-    const isEndOfGameNode = currentNode.value.children.length === 0;
-    if (isEndOfGameNode && gameResult.value) {
-      return gameResult.value;
-    }
-    
     // Check if the current local board state is game over
     if (chess.isGameOver()) {
       if (chess.isCheckmate()) {
@@ -974,12 +968,18 @@
 
       if (!sanMove) return false
 
-      const existing = currentNode.value.children.find(c => c.uci === uci)
+      // Use the corrected king-destination square everywhere downstream
+      // (nodeMap, movesListUCI, lastMoveSquare) instead of the raw explorer
+      // uci, which for castling points at the rook square (e.g. h1) rather
+      // than where the king actually lands (g1).
+      const normalizedUci = `${from}${to}${promotion ?? ''}`
+
+      const existing = currentNode.value.children.find(c => c.uci === normalizedUci)
       if (existing) {
         currentNode.value = existing
       } else {
         const newNode = {
-              id: nodeIdCounter++, san: sanMove.san, uci, fen: chess.fen(), accuracy: null, parent: currentNode.value, children: []
+              id: nodeIdCounter++, san: sanMove.san, uci: normalizedUci, fen: chess.fen(), accuracy: null, parent: currentNode.value, children: []
           }
           nodeMap[newNode.id] = newNode
           currentNode.value.children.push(newNode)
@@ -990,7 +990,7 @@
           }
         }
 
-        movesListUCI.value.push(uci)
+        movesListUCI.value.push(normalizedUci)
         return sanMove
   }
 
@@ -2234,19 +2234,17 @@
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      font-size: clamp(0.7rem, 1.2vw, 1rem);
+      font-size: clamp(0.62rem, 1vw, 0.85rem);
       font-weight: 600;
       color: #fff8ef;
       text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.6);
       background: rgba(0, 0, 0, 0.3);
-      padding: 0.25rem 0.5rem;
+      padding: 0.25rem 0.4rem;
       border-radius: 6px;
       backdrop-filter: blur(4px);
       z-index: 10;
       white-space: nowrap;
-      max-width: 90%;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      width: max-content;
   }
 
   .accuracydescribtion {
