@@ -8,7 +8,7 @@
   import 'vue3-chessboard/style.css'
   import Title from "../assets/Title.vue"
   import SettingsPanel from "../assets/SettingsPanel.vue"
-  import { startEngine, getEvaluation, cancelAnalysis, setOnLichessRateLimited, resetCloudEvalState } from "../engine/engine.js"
+  import { startEngine, getEvaluation, cancelAnalysis } from "../engine/engine.js"
   import { useRoute, useRouter } from 'vue-router'
 
   const currentTheme = ref(localStorage.getItem('chesslab_theme') || 'brown')
@@ -28,12 +28,11 @@
     window.addEventListener('keydown', handleKeyDown)
     window.addEventListener('click', closeContextMenu)
     window.addEventListener('scroll', closeContextMenu, true)
+    
+    activeTab.value = 'moves'
+    movesTitle.value.style.backgroundColor = activeColor.value
     reportTitle.value.style.backgroundColor = passiveColor.value
     explorerTitle.value.style.backgroundColor = passiveColor.value
-
-    setOnLichessRateLimited(() => {
-      showToast("Using fully local analysis for now")
-    })
 
     await startEngine();
     engineReady = true
@@ -109,6 +108,13 @@
   const whiteRating = ref(null)
   const blackRating = ref(null)
   const hasPlayerInfo = ref(false)
+
+  // Extract Game Result from PGN if available
+  const gameResult = ref(null)
+  if (route.query.pgn) {
+    const match = route.query.pgn.match(/\[Result\s+"([^"]+)"\]/)
+    if (match) gameResult.value = match[1]
+  }
 
   const LICHESS_TOKEN = import.meta.env.VITE_LICHESS_TOKEN
   const opening = ref("")
@@ -220,17 +226,28 @@
     if (route.query.blackRating) blackRating.value = route.query.blackRating
   }
 
-  const topPlayer = computed(() => (
-    isFlipped.value
-      ? { name: whiteName.value, rating: whiteRating.value, side: 'white' }
-      : { name: blackName.value, rating: blackRating.value, side: 'black' }
-  ))
+  const isWhiteWinner = computed(() => gameResult.value === '1-0')
+  const isBlackWinner = computed(() => gameResult.value === '0-1')
 
-  const bottomPlayer = computed(() => (
-    isFlipped.value
-      ? { name: blackName.value, rating: blackRating.value, side: 'black' }
-      : { name: whiteName.value, rating: whiteRating.value, side: 'white' }
-  ))
+  const topPlayer = computed(() => {
+    const isWhite = !isFlipped.value
+    return {
+      name: isWhite ? whiteName.value : blackName.value,
+      rating: isWhite ? whiteRating.value : blackRating.value,
+      side: isWhite ? 'white' : 'black',
+      isWinner: isWhite ? isWhiteWinner.value : isBlackWinner.value
+    }
+  })
+
+  const bottomPlayer = computed(() => {
+    const isWhite = !isFlipped.value
+    return {
+      name: isWhite ? blackName.value : whiteName.value,
+      rating: isWhite ? blackRating.value : whiteRating.value,
+      side: isWhite ? 'black' : 'white',
+      isWinner: isWhite ? isBlackWinner.value : isWhiteWinner.value
+    }
+  })
 
   let longPressTimer = null
   let longPressTriggered = false
@@ -586,7 +603,6 @@
   }
 
   function resetBoard() {
-    resetCloudEvalState()
     chess.reset()
     boardAPI.value.setPosition(chess.fen())
     movesListUCI.value = []
@@ -612,11 +628,9 @@
     await cancelAnalysis() 
     
     const cached = currentNode.value.analysisData
-    // We require 3 lines for manual review (unless it's the root node which has no moves)
     const requiresMultiPV3 = !isImporting.value
     const hasRequiredMultiPV = !requiresMultiPV3 || !currentNode.value.san || (cached?.topMoves?.length >= 3)
 
-    // 1. If we have a full cache (3 lines), use it and stop.
     if (cached && cached.depth >= targetDepth.value && hasRequiredMultiPV) {
       moveData.value = cached
       lastMoveSquare.value = movesListUCI.value.at(-1)?.slice(2, 4) ?? null
@@ -637,7 +651,6 @@
       return 
     }
 
-    // 2. If we have a partial cache (from MultiPV 1 import), display it immediately!
     if (cached && !hasRequiredMultiPV) {
       moveData.value = cached
       lastMoveSquare.value = movesListUCI.value.at(-1)?.slice(2, 4) ?? null
@@ -651,10 +664,8 @@
       if (typeof uciThirdLine === "function") uciThirdLine()
       if (typeof uciLine === "function") uciLine()
       drawBestArrow()
-      // Do not return! Fall through to the engine call to upgrade it to MultiPV 3
     }
 
-    // 3. Calculate with the correct MultiPV
     isAnalyzing.value = true
     bestArrowSquares.value = null
     if (showBestArrow.value && boardAPI.value) boardAPI.value.hideMoves()
@@ -692,7 +703,6 @@
       beforeFen,
       afterFen,
       moveTree.fen,
-      // Use MultiPV 1 during bulk import, MultiPV 3 during manual review
       isImporting.value ? 1 : 3 
     )
   }
@@ -703,6 +713,7 @@
   }
 
   function formatEval(evalObj) {
+    if (currentNode.value.children.length === 0 && gameResult.value) return gameResult.value
     if (!evalObj) return ""
     if (evalObj.type === "cp") return (evalObj.value / 100).toFixed(2)
     if (evalObj.type === "mate") return `#${evalObj.value}`
@@ -947,7 +958,6 @@
   }
 
   async function loadFen(fen){
-    resetCloudEvalState()
     chess.load(fen)
     moveTree.fen = fen
     currentNode.value = moveTree
@@ -955,7 +965,6 @@
   }
 
   async function loadImportedGame(uciList) {
-    resetCloudEvalState()
     isImporting.value = true
     importCancelled = false
     importProgress.value = { current: 0, total: uciList.length }
@@ -973,6 +982,7 @@
         treeVersion.value++
         
         await saveGameInsights()
+        changeActiveToReport()
       }
     } finally {
       isImporting.value = false
@@ -1053,7 +1063,6 @@
     return Math.round((importProgress.value.current / importProgress.value.total) * 100)
   })
 
-  // Insights tracking logic
   const currentUserId = ref(null)
   let pendingGameMeta = null
 
@@ -1169,7 +1178,6 @@
       if (phaseCount > 0) phaseAccuracy[phase] = phaseSum / phaseCount
     }
 
-    // 1. Track Blunders and Good Moves
     const blunderSquares = {};
     const goodSquares = {};
     let trackNode = moveTree.children[0];
@@ -1189,7 +1197,6 @@
       trackPly++;
     }
 
-    // 2. Track Piece Performance 
     const pieceStats = { p: {count: 0, sum: 0}, n: {count: 0, sum: 0}, b: {count: 0, sum: 0}, r: {count: 0, sum: 0}, q: {count: 0, sum: 0}, k: {count: 0, sum: 0} };
     let pieceNode = moveTree.children[0];
     let piecePly = 1;
@@ -1209,7 +1216,6 @@
       piecePly++;
     }
 
-    // 3. Track Playstyle Data
     let earlyTrades = 0;
     let evalSwings = 0;
     const tempChess = new Chess();
@@ -1361,6 +1367,7 @@
         <div class="player-bar" v-if="hasPlayerInfo">
           <span class="player-color-dot" :class="topPlayer.side"></span>
           <span class="player-name">{{ topPlayer.name }}</span>
+          <span v-if="topPlayer.isWinner" class="winner-crown">👑</span>
           <span class="player-rating" v-if="topPlayer.rating">{{ topPlayer.rating }}</span>
         </div>
         
@@ -1398,6 +1405,7 @@
         <div class="player-bar bottom" v-if="hasPlayerInfo">
           <span class="player-color-dot" :class="bottomPlayer.side"></span>
           <span class="player-name">{{ bottomPlayer.name }}</span>
+          <span v-if="bottomPlayer.isWinner" class="winner-crown">👑</span>
           <span class="player-rating" v-if="bottomPlayer.rating">{{ bottomPlayer.rating }}</span>
         </div>
         
@@ -1537,7 +1545,10 @@
 
        <!-- EXPLORER TAB -->
       <div class="explorer" v-else-if="activeTab === 'explorer'">
-        <div v-if="explorerLoading" class="explorer-status">Loading…</div>
+        <div v-if="explorerLoading" class="explorer-status">
+          <div class="mini-spinner"></div>
+          Loading master games…
+        </div>
         <div v-else-if="explorerError" class="explorer-status error">{{ explorerError }}</div>
         <template v-else>
           <div class="explorer-header">
@@ -1767,6 +1778,11 @@
     white-space: nowrap;
   }
 
+  .winner-crown {
+    font-size: 1.1rem;
+    filter: drop-shadow(0 0 4px gold);
+  }
+
   .player-rating {
     font-family: "JetBrains Mono", monospace;
     font-size: 0.8em;
@@ -1815,7 +1831,8 @@
   .movesButtons {
     display: flex;
     justify-content: center;
-    gap: 0.5rem;
+    gap: 0.4rem;
+    padding: 0 0.5rem;
   }
 
   .move-row {
@@ -2074,19 +2091,25 @@
 
   .movehistory {
     font-family: serif;
-    position: sticky;
+    flex: 1 1 0;
+    min-width: 0;
     text-align: center;
     color: #f5f5dc;
     font-weight: 700;
     text-transform: uppercase;
-    margin: 20px 0;
+    margin: 12px 0;
     text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
-    letter-spacing: 2.5px;
-    padding: 0.5rem 1.5rem;
+    letter-spacing: 1px;
+    padding: 0.5rem 0.4rem;
     border-radius: 5px;
     background-color: var(--btn-idle);
     border: none;
-    font-size: clamp(1rem, 2vw, 1.2rem);
+    font-size: clamp(0.7rem, 2vw, 0.95rem);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
   }
 
   .boardtools {
@@ -2419,36 +2442,7 @@
     flex-shrink: 0;
   }
 
-  .movesButtons {
-    display: flex;
-    justify-content: center;
-    gap: 0.4rem;
-    padding: 0 0.5rem;
-  }
-
-  .movehistory {
-    font-family: serif;
-    flex: 1 1 0;
-    min-width: 0;
-    text-align: center;
-    color: #f5f5dc;
-    font-weight: 700;
-    text-transform: uppercase;
-    margin: 12px 0;
-    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
-    letter-spacing: 1px;
-    padding: 0.5rem 0.4rem;
-    border-radius: 5px;
-    background-color: var(--btn-idle);
-    border: none;
-    font-size: clamp(0.7rem, 2vw, 0.95rem);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    cursor: pointer;
-    transition: background-color 0.15s ease;
-  }
-
+  /* Prettier Explorer Styling */
   .explorer {
     padding: 0.6rem 0.8rem 1rem;
     box-sizing: border-box;
@@ -2460,9 +2454,22 @@
     font-family: 'Inter', sans-serif;
     font-size: 0.9rem;
     padding: 2rem 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
   }
 
   .explorer-status.error { color: #ffb0a8; }
+
+  .mini-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255,255,255,0.2);
+    border-top-color: var(--text-highlight);
+    border-radius: 50%;
+    animation: spinRing 1s linear infinite;
+  }
 
   .explorer-header {
     display: flex;
@@ -2478,8 +2485,8 @@
     font-family: "JetBrains Mono", monospace;
     font-weight: 700;
     font-size: 0.85rem;
-    color: #9fd8ff;
-    background: rgba(0, 0, 0, 0.25);
+    color: var(--text-highlight);
+    background: rgba(255, 255, 255, 0.08);
     border-radius: 6px;
     padding: 0.1rem 0.4rem;
     flex-shrink: 0;
@@ -2497,7 +2504,7 @@
   .explorer-table {
     display: flex;
     flex-direction: column;
-    gap: 0.3rem;
+    gap: 0.35rem;
   }
 
   .explorer-row {
@@ -2505,15 +2512,16 @@
     grid-template-columns: 3rem 4.2rem 1fr;
     align-items: center;
     gap: 0.6rem;
-    padding: 0.45rem 0.5rem;
-    border-radius: 8px;
-    background: rgba(0, 0, 0, 0.12);
+    padding: 0.55rem 0.7rem;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.15);
     cursor: pointer;
-    transition: background 0.15s ease;
+    transition: all 0.2s ease;
   }
 
   .explorer-row:not(.explorer-row-head):not(.explorer-row-total):hover {
-    background: rgba(103, 122, 228, 0.18);
+    background: rgba(103, 122, 228, 0.25);
+    transform: translateX(3px);
   }
 
   .explorer-row-head {
@@ -2529,16 +2537,16 @@
 
   .explorer-row-total {
     cursor: default;
-    background: rgba(0, 0, 0, 0.22);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    margin-top: 0.2rem;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    margin-top: 0.4rem;
     font-weight: 700;
   }
 
   .col-move {
     font-weight: 700;
-    color: #f4f0e3;
-    font-size: 0.9rem;
+    color: var(--text-highlight);
+    font-size: 1rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -2553,14 +2561,14 @@
   .games-percent {
     font-family: "JetBrains Mono", monospace;
     font-weight: 700;
-    font-size: 0.85rem;
+    font-size: 0.9rem;
     color: #f4f0e3;
   }
 
   .games-count {
     font-family: "JetBrains Mono", monospace;
-    font-size: 0.68rem;
-    color: rgba(245, 245, 220, 0.55);
+    font-size: 0.72rem;
+    color: rgba(244, 240, 227, 0.5);
   }
 
   .col-split { min-width: 0; }
@@ -2568,10 +2576,10 @@
   .split-bar {
     display: flex;
     width: 100%;
-    height: 1.3rem;
-    border-radius: 6px;
+    height: 1.5rem;
+    border-radius: 8px;
     overflow: hidden;
-    box-shadow: inset 0 1px 3px rgba(0,0,0,0.35);
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.4);
   }
 
   .split-white, .split-draw, .split-black {

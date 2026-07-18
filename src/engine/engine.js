@@ -1,17 +1,13 @@
-const LICHESS_TOKEN = import.meta.env.VITE_LICHESS_TOKEN
-
 let sf = null
 let analysisId = 0
 let currentResolve = null
 let currentMultiPV = 3
 
 // ---- Storage Keys -----------------------------------------------------
-const CLOUD_EVAL_STORAGE_KEY = 'chesserly_cloudEvalCache'
 const LOCAL_EVAL_STORAGE_KEY = 'chesserly_localEvalCache'
 const MAX_CACHE_ENTRIES = 1500
 
 // ---- Cache Dirty Flags ------------------------------------------------
-let cloudEvalDirty = false
 let localEvalDirty = false
 let persistTimer = null
 const PERSIST_DEBOUNCE_MS = 1000
@@ -46,10 +42,6 @@ function schedulePersist() {
     if (persistTimer) return
     persistTimer = setTimeout(() => {
         persistTimer = null
-        if (cloudEvalDirty) {
-            saveCacheToStorage(CLOUD_EVAL_STORAGE_KEY, cloudEvalCache)
-            cloudEvalDirty = false
-        }
         if (localEvalDirty) {
             saveCacheToStorage(LOCAL_EVAL_STORAGE_KEY, localEvalCache)
             localEvalDirty = false
@@ -57,48 +49,11 @@ function schedulePersist() {
     }, PERSIST_DEBOUNCE_MS)
 }
 
-const cloudEvalCache = loadCacheFromStorage(CLOUD_EVAL_STORAGE_KEY)
 const localEvalCache = loadCacheFromStorage(LOCAL_EVAL_STORAGE_KEY)
-
-// ---- 429 backoff (for Cloud Eval only) --------------------------------
-const LICHESS_COOLDOWN_MS = 60_000
-let lichessCooldownUntil = 0
-
-let onRateLimited = null
-export function setOnLichessRateLimited(callback) {
-    onRateLimited = callback
-}
-
-function isLichessOnCooldown() {
-    return Date.now() < lichessCooldownUntil
-}
-
-function enterLichessCooldown() {
-    const alreadyCoolingDown = isLichessOnCooldown()
-    lichessCooldownUntil = Date.now() + LICHESS_COOLDOWN_MS
-    if (!alreadyCoolingDown && onRateLimited) {
-        onRateLimited()
-    }
-}
-
-// ---- Cloud Eval Game Disable State -------------------------------------
-let cloudEvalDisabledForGame = false
-
-/**
- * Resets the cloud eval disabled state. 
- * Call this when loading a new game to re-enable cloud eval fetches.
- */
-export function resetCloudEvalState() {
-    cloudEvalDisabledForGame = false
-}
 
 const STARTPOS_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 
 // ---- Local Opening Book -----------------------------------------------
-// Loaded once from a static JSON file. The file is an array of opening
-// lines, each line being an array of UCI moves. From those lines we
-// build a Map: positionPrefix (comma-joined UCI moves before the move)
-// -> Set of UCI moves considered "book" at that position.
 let openingBookMap = new Map()
 let openingBookLoaded = false
 
@@ -111,7 +66,6 @@ export async function loadOpeningBook(url = '/book/openings.json') {
 
         openingBookMap = new Map()
 
-        // Format A: array of arrays of UCI moves (one entry per opening line)
         if (Array.isArray(data)) {
             for (const line of data) {
                 if (!Array.isArray(line)) continue
@@ -123,7 +77,6 @@ export async function loadOpeningBook(url = '/book/openings.json') {
                 }
             }
         }
-        // Format B: { "e2e4,e7e5": ["g1f3","b1c3", ...], ... }
         else if (data && typeof data === 'object') {
             for (const [key, moves] of Object.entries(data)) {
                 if (Array.isArray(moves)) openingBookMap.set(key, new Set(moves))
@@ -143,7 +96,6 @@ export function isOpeningBookLoaded() {
 }
 
 export async function startEngine() {
-    // Kick off book loading in parallel with engine boot so neither blocks the other.
     const bookPromise = loadOpeningBook()
 
     await new Promise((resolve) => {
@@ -166,7 +118,6 @@ export async function startEngine() {
         sf.postMessage("uci")
     })
 
-    // Make sure the book is ready before analyses begin.
     await bookPromise
 }
 
@@ -201,7 +152,6 @@ function isBookMove(movesList, move, hasCustomRoot = false) {
     if (hasCustomRoot) return false
     if (!openingBookLoaded || openingBookMap.size === 0) return false
 
-    // Position key = comma-joined UCI moves BEFORE the candidate move
     const key = movesList.join(',')
     const bookMoves = openingBookMap.get(key)
     if (!bookMoves) return false
@@ -225,7 +175,7 @@ function normalizeLine(line) {
 
 // ---- Sacrifice Detection (Static Exchange Evaluation) -------------------
 const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9 }
-const ATTACKER_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 2 } // King is valued at 2 for attack
+const ATTACKER_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 2 }
 
 function parseFenBoard(fen) {
     return fen.split(' ')[0].split('/').map((row) => {
@@ -308,15 +258,12 @@ function isSacrifice(beforeFen, afterFen, move) {
     const { rankIndex, file } = squareToIndices(move.slice(2, 4))
     const piece = board[rankIndex][file]
     
-    // Exclude empty squares, kings, and pawns from being considered the sacrificed piece
     if (!piece || !PIECE_VALUES[piece.type] || piece.type === 'p') return false
 
-    // Consider the value of the piece captured during the move
     let capturedValue = 0
     if (beforeFen) {
         const beforeBoard = parseFenBoard(beforeFen)
         const targetPiece = beforeBoard[rankIndex][file]
-        // If there was an enemy piece on the square we moved to, we gain its value
         if (targetPiece && PIECE_VALUES[targetPiece.type]) {
             capturedValue = PIECE_VALUES[targetPiece.type]
         }
@@ -324,27 +271,22 @@ function isSacrifice(beforeFen, afterFen, move) {
 
     const opponentColor = piece.color === 'w' ? 'b' : 'w'
     let attackerValues = findAttackerValues(board, rankIndex, file, opponentColor)
-    if (attackerValues.length === 0) return false // nothing attacks it — not hanging
+    if (attackerValues.length === 0) return false
 
     const defenderValues = findAttackerValues(board, rankIndex, file, piece.color, { rankIndex, file })
 
-    // KING LOGIC FIX: 
-    // If the piece is defended, the opponent's King legally cannot take it.
     if (defenderValues.length > 0) {
         attackerValues = attackerValues.filter(v => v !== 2)
     }
 
-    // If the King was the only attacker, and it was filtered out, it's not a sacrifice.
     if (attackerValues.length === 0) return false
 
-    // Sort attackers and defenders by value (cheapest first)
     attackerValues.sort((a, b) => a - b)
     defenderValues.sort((a, b) => a - b)
 
-    // Simulate the capture sequence (Static Exchange Evaluation)
     let opponentGained = 0
     let weGained = capturedValue
-    let turn = 'attacker' // opponent's turn to capture first
+    let turn = 'attacker'
     let attackerIdx = 0
     let defenderIdx = 0
     let currentPieceValue = PIECE_VALUES[piece.type]
@@ -365,89 +307,7 @@ function isSacrifice(beforeFen, afterFen, move) {
         }
     }
 
-    // If the opponent wins material by initiating the capture, it's a sacrifice.
     return opponentGained - weGained > 0
-}
-
-async function getCloudEval(fen, multiPV) {
-    // Stop fetching entirely if the position has fallen out of the cloud API 
-    // for the remainder of the current game.
-    if (cloudEvalDisabledForGame || isLichessOnCooldown()) return null
-
-    const cacheKey = `${fen}|${multiPV}`
-
-    if (cloudEvalCache.has(cacheKey)) {
-        return cloudEvalCache.get(cacheKey)
-    }
-
-    const url = `https://lichess.org/api/cloud-eval?fen=${encodeURIComponent(fen)}&multiPv=${multiPV}`
-
-    try {
-        const response = await fetch(url, {
-            headers: {
-                'Authorization': `Bearer ${LICHESS_TOKEN}`,
-                'Accept': 'application/json'
-            }
-        })
-
-        if (response.status === 429) {
-            enterLichessCooldown()
-            return null
-        }
-
-        // 404 indicates the position is not in the cloud database.
-        // Disable all future cloud eval lookups for this game.
-        if (response.status === 404) {
-            cloudEvalDisabledForGame = true
-            return null
-        }
-
-        if (!response.ok) {
-            cloudEvalCache.set(cacheKey, null)
-            cloudEvalDirty = true
-            schedulePersist()
-            return null
-        }
-
-        const data = await response.json()
-        if (!data || !Array.isArray(data.pvs) || data.pvs.length === 0) {
-            cloudEvalCache.set(cacheKey, null)
-            cloudEvalDirty = true
-            schedulePersist()
-            
-            // Extra fallback: if it returns ok but no PVs, treat it as out-of-cloud.
-            cloudEvalDisabledForGame = true
-            return null
-        }
-
-        const topMoves = data.pvs.map((pv) => {
-            const line = normalizeLine((pv.moves || '').split(' ').filter(Boolean))
-            const score = typeof pv.mate === 'number'
-                ? { type: 'mate', value: pv.mate }
-                : { type: 'cp', value: pv.cp ?? 0 }
-            return {
-                Move: line[0] ?? '',
-                Centipawn: score.type === 'cp' ? score.value : null,
-                score,
-                line
-            }
-        })
-
-        const result = {
-            evaluation: topMoves[0]?.score ?? null,
-            topMoves,
-            currentDepth: data.depth ?? 0,
-            best11: null
-        }
-
-        cloudEvalCache.set(cacheKey, result)
-        cloudEvalDirty = true
-        schedulePersist()
-        return result
-    } catch (error) {
-        console.warn("Lichess cloud eval fetch failed:", error)
-        return null
-    }
 }
 
 function analyzePosition(moves, depth, onUpdate = null, multiPV = 3, rootFen = null) {
@@ -546,18 +406,7 @@ function analyzePosition(moves, depth, onUpdate = null, multiPV = 3, rootFen = n
     })
 }
 
-async function analyzeWithCloudFallback(fen, moves, depth, onUpdate, multiPV, rootFen = null) {
-    const cloud = await getCloudEval(fen, multiPV)
-    if (cloud) return cloud
-    return analyzePosition(moves, depth, onUpdate, multiPV, rootFen)
-}
-
 // ---- Brilliant Move Logic Helpers --------------------------------------
-/**
- * Convert a score (cp or mate) to a comparable centipawn value.
- * All scores are treated as from White's perspective (positive = White better).
- * Mate in 1 ≈ +9900, getting mated in 1 ≈ -9900, etc.
- */
 function scoreToCpComparable(score) {
     if (!score) return 0
     if (score.type === 'cp') return score.value
@@ -570,9 +419,6 @@ function scoreToCpComparable(score) {
     return 0
 }
 
-/**
- * Check whether a move qualifies as "brilliant" against every criterion.
- */
 function checkBrilliant({
     move,
     best_move,
@@ -586,16 +432,12 @@ function checkBrilliant({
 }) {
     const moverIsWhite = side_to_move === 'w'
 
-    // 1. Best move
     if (best_move !== move) return false
-
-    // 3. Not an opening move
     if (isBook) return false
 
     if (!top_moves || top_moves.length < 2) return false
     if (!top_moves[0]?.score || !top_moves[1]?.score) return false
 
-    // 2. Unique best (>= 180 cp gap)
     const bestCp    = scoreToCpComparable(top_moves[0].score)
     const secondCp  = scoreToCpComparable(top_moves[1].score)
     const uniquenessGap = moverIsWhite
@@ -603,20 +445,13 @@ function checkBrilliant({
         : (secondCp - bestCp)
     if (uniquenessGap < 180) return false
 
-    // 4. Not a forced mate already
     if (eval_before?.type === 'mate') return false
 
-    // 5 & 6. Not already winning (+5) or losing (-5)
     if (eval_before?.type !== 'cp') return false
     if (Math.abs(eval_before.value) >= 500) return false
 
-    // 7. Involves giving up N / B / R / Q
     if (!is_sacrifice) return false
 
-    // 8. Opponent can legally capture it
-    // (isSacrifice() verifies attackers exist & SEE favors opponent)
-
-    // 9. Best capture doesn't ruin evaluation
     if (eval_after?.type === 'mate') {
         const moverHasMate = moverIsWhite ? eval_after.value > 0 : eval_after.value < 0
         if (!moverHasMate) return false
@@ -632,10 +467,6 @@ function checkBrilliant({
         return false
     }
 
-    // 10. Improves activity / attack / king safety
-    // (Implied by 2 + 7 + 9)
-
-    // 11. Not simply recapturing
     if (movesList && movesList.length > 0) {
         const opponentLastMove = movesList[movesList.length - 1]
         if (opponentLastMove.slice(2, 4) === move.slice(2, 4)) return false
@@ -648,9 +479,7 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
     const myId = analysisId
     const hasCustomRoot = !!(rootFen && rootFen !== STARTPOS_FEN)
 
-    const beforePromise = beforeFen
-        ? analyzeWithCloudFallback(beforeFen, movesList, 10, null, 2, rootFen)
-        : analyzePosition(movesList, 10, null, 2, rootFen)
+    const beforePromise = analyzePosition(movesList, 10, null, 2, rootFen)
 
     const isBook = isBookMove(movesList, move, hasCustomRoot)
     const before = await beforePromise
@@ -661,7 +490,6 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
     const top_moves = before.topMoves || []
     const best_move = top_moves[0]?.Move ?? ""
     
-    // Use comparable cp for uniqueness gap calculation
     const second_best_cp = top_moves.length >= 2
         ? scoreToCpComparable(top_moves[1]?.score)
         : scoreToCpComparable(top_moves[0]?.score)
@@ -827,25 +655,14 @@ export async function getEvaluation(move, movesList, depth, onUpdate = null, bef
         }
     }
 
-    let afterFinal
-    if (afterFen) {
-        const cloud = await getCloudEval(afterFen, multiPV)
-        if (analysisId !== myId) return null
-        if (cloud) {
-            afterFinal = cloud
-            if (onUpdate) onUpdate(buildResult(cloud.evaluation, cloud.topMoves, cloud.currentDepth))
-        }
-    }
-
-    if (!afterFinal) {
-        afterFinal = await analyzePosition(
-            afterMoves,
-            depth,
-            onUpdate ? (data) => onUpdate(buildResult(data.evaluation, data.topMoves, data.currentDepth)) : null,
-            multiPV,
-            rootFen
-        )
-    }
+    let afterFinal = await analyzePosition(
+        afterMoves,
+        depth,
+        onUpdate ? (data) => onUpdate(buildResult(data.evaluation, data.topMoves, data.currentDepth)) : null,
+        multiPV,
+        rootFen
+    )
+    
     if (!afterFinal) return null
 
     return buildResult(afterFinal.evaluation, afterFinal.topMoves, depth)
