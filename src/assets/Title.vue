@@ -28,6 +28,10 @@
     router.push('/vsComputer')
   }
 
+  function puzzlesClick() {
+    router.push('/Puzzles')
+  }
+
   const activeButton = computed(() => {
     if (route.path === '/Review') return 'import'
     if (route.path === '/Analysis') return 'analyze'
@@ -78,11 +82,11 @@
     </button>
 
     <!-- Disabled Puzzles -->
+    <!-- Change the Puzzles button to this: -->
     <button
-      class="btn tooltip-btn"
+      class="btn"
       :style="{ background: `linear-gradient(${bgColor('puzzles')})` }"
-      disabled
-      data-tooltip="Coming soon..."
+      @click="puzzlesClick()"
     >
       🧩 Puzzles
     </button>

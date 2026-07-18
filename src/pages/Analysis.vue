@@ -1315,6 +1315,30 @@
     }
     const pgnHash = generatePgnHash(pgn)
 
+      // Add this right above: const gamesRef = collection(...)
+  const extractedPuzzles = [];
+  let pNode = moveTree.children[0];
+  let pPly = 1;
+  
+  while (pNode) {
+    const side = pPly % 2 === 1 ? 'white' : 'black';
+    if (side === myColor) {
+      if (pNode.accuracy === 'blunder' || pNode.accuracy === 'mistake') {
+        if (pNode.parent && pNode.analysisData?.best_move) {
+          extractedPuzzles.push({
+            fen: pNode.parent.fen,        // Position BEFORE the blunder
+            bestMove: pNode.analysisData.best_move, // The correct move to play
+            playedMove: pNode.uci,        // The blunder they actually played
+            turn: side
+          });
+        }
+      }
+    }
+    pNode = pNode.children[0];
+    pPly++;
+  }
+
+
     const gamesRef = collection(db, `users/${currentUserId.value}/games`)
     const dupQ = query(gamesRef, where('pgnHash', '==', pgnHash))
     const dupSnap = await getDocs(dupQ)
@@ -1333,7 +1357,8 @@
           goodSquares,
           pieceStats,
           playstyle
-        }
+        },
+        puzzles: extractedPuzzles
       })
     } else {
       await addDoc(gamesRef, {
@@ -1354,7 +1379,8 @@
           goodSquares,
           pieceStats,
           playstyle
-        }
+        },
+        puzzles: extractedPuzzles
       })
     }
   }
