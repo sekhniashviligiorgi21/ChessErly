@@ -230,7 +230,7 @@
   const isBlackWinner = computed(() => gameResult.value === '0-1')
 
   const topPlayer = computed(() => {
-    const isWhite = !isFlipped.value
+    const isWhite = isFlipped.value         
     return {
       name: isWhite ? whiteName.value : blackName.value,
       rating: isWhite ? whiteRating.value : blackRating.value,
@@ -240,12 +240,12 @@
   })
 
   const bottomPlayer = computed(() => {
-    const isWhite = !isFlipped.value
+    const isWhite = !isFlipped.value     
     return {
-      name: isWhite ? blackName.value : whiteName.value,
-      rating: isWhite ? blackRating.value : whiteRating.value,
-      side: isWhite ? 'black' : 'white',
-      isWinner: isWhite ? isBlackWinner.value : isWhiteWinner.value
+      name: isWhite ? whiteName.value : blackName.value,
+      rating: isWhite ? whiteRating.value : blackRating.value,
+      side: isWhite ? 'white' : 'black',
+      isWinner: isWhite ? isWhiteWinner.value : isBlackWinner.value
     }
   })
 
