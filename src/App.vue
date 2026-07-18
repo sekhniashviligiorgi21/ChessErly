@@ -15,8 +15,9 @@
     --panel-1: #3a2a1f; --panel-2: #251a13;
     --list-1: #4a3429; --list-2: #322217;
     --btn-active: #8a5a3b; --btn-idle: #5c3e2a;
-    --title-btn-active-1: #8a5a3b; --title-btn-active-2: #5c3e2a;
-    --title-btn-idle-1: #6f4a33; --title-btn-idle-2: #4a3221;
+    /* Made active buttons significantly brighter and idle buttons darker */
+    --title-btn-active-1: #d4a373; --title-btn-active-2: #a87045;
+    --title-btn-idle-1: #3e2a1c; --title-btn-idle-2: #2a1c12;
     --text-highlight: #f0d8a8;
     --board-light: #e8d5b5; --board-dark: #b58863;
   }

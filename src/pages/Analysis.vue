@@ -713,10 +713,19 @@
   }
 
   function formatEval(evalObj) {
-    if (currentNode.value.children.length === 0 && gameResult.value) return gameResult.value
+    if (chess.isGameOver()) {
+      if (chess.isCheckmate()) {
+        return chess.turn() === 'w' ? '0-1' : '1-0'
+      }
+      if (chess.isStalemate() || chess.isInsufficientMaterial() || chess.isThreefoldRepetition() || chess.isDraw()) {
+        return '1/2-1/2'
+      }
+    }
+
     if (!evalObj) return ""
     if (evalObj.type === "cp") return (evalObj.value / 100).toFixed(2)
-    if (evalObj.type === "mate") return `#${evalObj.value}`
+    if (evalObj.type === "mate") return `M${evalObj.value}`
+    return ""
   }
 
   function evalSize() {
@@ -915,10 +924,20 @@
 
   function applyUciMove(uci) {
       const from = uci.slice(0, 2)
-      const to = uci.slice(2, 4)
+      let to = uci.slice(2, 4)
       const promotion = uci.length > 4 ? uci[4] : undefined
 
-      const sanMove = chess.move({ from, to, promotion: promotion ?? undefined })
+      // Fallback for Chess960 castling notation that chess.js might reject directly
+      const castlingMap = {
+        'e1h1': 'e1g1', 'e1a1': 'e1c1', 'e8h8': 'e8g8', 'e8a8': 'e8c8'
+      };
+
+      let sanMove = chess.move({ from, to, promotion: promotion ?? undefined })
+      if (!sanMove && castlingMap[uci]) {
+          to = castlingMap[uci].slice(2, 4)
+          sanMove = chess.move({ from, to, promotion: promotion ?? undefined })
+      }
+
       if (!sanMove) return false
 
       const existing = currentNode.value.children.find(c => c.uci === uci)
@@ -2187,6 +2206,7 @@
       border-radius: 6px;
       backdrop-filter: blur(4px);
       z-index: 10;
+      white-space: nowrap;
   }
 
   .accuracydescribtion {
@@ -2247,6 +2267,8 @@
       flex-shrink: 0;
       width: 4.4rem;
       text-align: center;
+      white-space: nowrap;
+      padding: 0 0.2rem;
   }
 
   .board-acc-icon {
