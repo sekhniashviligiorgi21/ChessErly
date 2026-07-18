@@ -37,6 +37,7 @@
     if (route.path === '/Analysis') return 'analyze'
     if (route.path === '/Insights') return 'insight'
     if (route.path === '/vsComputer') return 'computer'
+    if (route.path === '/Puzzles') return 'puzzles' 
     return 'analyze'
   })
 </script>
@@ -81,8 +82,6 @@
       🤖 VS Computer
     </button>
 
-    <!-- Disabled Puzzles -->
-    <!-- Change the Puzzles button to this: -->
     <button
       class="btn"
       :style="{ background: `linear-gradient(${bgColor('puzzles')})` }"
