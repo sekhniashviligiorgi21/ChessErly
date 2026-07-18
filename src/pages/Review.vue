@@ -292,20 +292,24 @@
     const opponent = isWhite ? (game.black || {}) : (game.white || {})
     
     let result = '½-½'
+    let outcome = 'draw'
     if (me.result === 'win') {
       result = isWhite ? '1-0' : '0-1'
+      outcome = 'win'
     } else if (['resigned', 'checkmated', 'abandoned', 'lose'].includes(me.result)) {
       result = isWhite ? '0-1' : '1-0'
+      outcome = 'loss'
     }
     
     return { 
       opponent: opponent.username || "Unknown", 
       result, 
+      outcome,
       myColor: isWhite ? 'White' : 'Black', 
       myRating: me.rating || 0, 
       oppRating: opponent.rating || 0 
     }
-  }
+}
 
   async function analyseGame() {
     if (!selectedGame.value || gameUci.value.length === 0) return
@@ -376,7 +380,7 @@
               <span class="color-dot" :class="formatResult(game).myColor.toLowerCase()"></span>
               <span class="opponent">vs {{ formatResult(game).opponent }}</span>
               <span class="rating">{{ formatResult(game).myRating }} vs {{ formatResult(game).oppRating }}</span>
-              <span class="result" :class="formatResult(game).result === '1-0' ? 'win' : (formatResult(game).result === '0-1' ? 'loss' : 'draw')">{{ formatResult(game).result }}</span>
+              <span class="result" :class="formatResult(game).outcome">{{ formatResult(game).result }}</span>
               <span class="time-class">{{ game.time_class }}</span>
               <button class="delete-btn" @click="deleteSavedGame(game.id, $event)">×</button>
             </div>
@@ -447,7 +451,7 @@
             <span class="color-dot" :class="formatResult(game).myColor.toLowerCase()"></span>
             <span class="opponent">vs {{ formatResult(game).opponent }}</span>
             <span class="rating">{{ formatResult(game).myRating }} vs {{ formatResult(game).oppRating }}</span>
-            <span class="result" :class="formatResult(game).result === '1-0' ? 'win' : (formatResult(game).result === '0-1' ? 'loss' : 'draw')">{{ formatResult(game).result }}</span>
+            <span class="result" :class="formatResult(game).outcome">{{ formatResult(game).result }}</span>
             <span class="time-class">{{ game.time_class }}</span>
           </div>
         </div>
