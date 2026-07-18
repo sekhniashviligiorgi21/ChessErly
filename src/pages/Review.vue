@@ -292,8 +292,11 @@
     const opponent = isWhite ? (game.black || {}) : (game.white || {})
     
     let result = '½-½'
-    if (me.result === 'win') result = '1-0'
-    else if (['resigned', 'checkmated', 'abandoned', 'lose'].includes(me.result)) result = '0-1'
+    if (me.result === 'win') {
+      result = isWhite ? '1-0' : '0-1'
+    } else if (['resigned', 'checkmated', 'abandoned', 'lose'].includes(me.result)) {
+      result = isWhite ? '0-1' : '1-0'
+    }
     
     return { 
       opponent: opponent.username || "Unknown", 
