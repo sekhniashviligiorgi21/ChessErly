@@ -5,7 +5,7 @@ import Analysis from './pages/Analysis.vue'
 import Review from './pages/Review.vue'
 import Play from './pages/Play.vue'
 import Insights from './pages/Insights.vue'
-import Puzzles from './pages/Insights.vue'
+import Puzzles from './pages/Puzzles.vue'
 
 const routes = [
 	{ path: "/", component: Analysis },
