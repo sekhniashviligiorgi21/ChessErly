@@ -496,7 +496,7 @@
       <h2>All Caught Up!</h2>
       <p>You have successfully solved all the available puzzles generated from your games.</p>
       <div class="exhausted-actions">
-        <router-link to="/import" class="tool-btn primary">Import & Analyze a Game</router-link>
+        <router-link to="/Review" class="tool-btn primary">Import & Analyze a Game</router-link>
       </div>
       <p class="muted">ChessLab automatically creates puzzles based on mistakes you make in your imported games.</p>
     </div>
