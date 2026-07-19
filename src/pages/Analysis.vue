@@ -1324,13 +1324,12 @@
         if (pNode.accuracy === 'blunder' || pNode.accuracy === 'mistake') {
           if (pNode.parent && pNode.analysisData?.best_move) {
             extractedPuzzles.push({
-  fen: pNode.parent.fen,        
-  bestMove: pNode.analysisData.best_move, 
-  playedMove: pNode.uci,        
-  turn: side,
-  // ADD THIS LINE TO SAVE THE EVALUATION:
-  eval: pNode.analysisData?.eval ? { type: pNode.analysisData.eval.type, value: pNode.analysisData.eval.value } : null 
-});
+              fen: pNode.parent.fen,        
+              bestMove: pNode.analysisData.best_move, 
+              playedMove: pNode.uci,        
+              turn: side,
+              eval: pNode.analysisData?.eval ? { type: pNode.analysisData.eval.type, value: pNode.analysisData.eval.value } : null 
+            });
           }
         }
       }
@@ -1345,6 +1344,15 @@
 
     if (!dupSnap.empty) {
       const gameDoc = dupSnap.docs[0]
+      const gameDocData = gameDoc.data()
+      
+      // Merge puzzles so we don't wipe out `solved: true` flags
+      const existingPuzzles = gameDocData.puzzles || []
+      const mergedPuzzles = extractedPuzzles.map(newP => {
+        const oldP = existingPuzzles.find(p => p.fen === newP.fen && p.bestMove === newP.bestMove)
+        return oldP ? { ...newP, solved: oldP.solved || false } : newP
+      })
+
       await updateDoc(doc(db, `users/${currentUserId.value}/games`, gameDoc.id), {
         insights: {
           myColor, 
@@ -1358,7 +1366,7 @@
           pieceStats,
           playstyle
         },
-        puzzles: extractedPuzzles
+        puzzles: mergedPuzzles
       })
     } else {
       await addDoc(gamesRef, {
