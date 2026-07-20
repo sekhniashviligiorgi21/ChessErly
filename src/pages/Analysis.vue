@@ -729,7 +729,6 @@
   }
 
   function formatEval(evalObj) {
-    // Check if the current local board state is game over
     if (chess.isGameOver()) {
       if (chess.isCheckmate()) {
         return chess.turn() === 'w' ? '0-1' : '1-0'
@@ -949,7 +948,6 @@
       let to = uci.slice(2, 4)
       const promotion = uci.length > 4 ? uci[4] : undefined
 
-      // Map Chess960 castling targets to standard chess.js targets
       const castlingFix = {
           'e1h1': 'g1', 'e1a1': 'c1', 'e8h8': 'g8', 'e8a8': 'c8'
       };
@@ -968,10 +966,6 @@
 
       if (!sanMove) return false
 
-      // Use the corrected king-destination square everywhere downstream
-      // (nodeMap, movesListUCI, lastMoveSquare) instead of the raw explorer
-      // uci, which for castling points at the rook square (e.g. h1) rather
-      // than where the king actually lands (g1).
       const normalizedUci = `${from}${to}${promotion ?? ''}`
 
       const existing = currentNode.value.children.find(c => c.uci === normalizedUci)
@@ -1317,26 +1311,48 @@
     const extractedPuzzles = [];
     let pNode = moveTree.children[0];
     let pPly = 1;
-    
+
     while (pNode) {
       const side = pPly % 2 === 1 ? 'white' : 'black';
       if (side === myColor) {
         if (pNode.accuracy === 'blunder' || pNode.accuracy === 'mistake') {
           if (pNode.parent && pNode.analysisData?.best_move) {
-            extractedPuzzles.push({
-              fen: pNode.parent.fen,        
-              bestMove: pNode.analysisData.best_move, 
-              playedMove: pNode.uci,        
-              turn: side,
-              eval: pNode.analysisData?.eval ? { type: pNode.analysisData.eval.type, value: pNode.analysisData.eval.value } : null 
-            });
+            const beforeEval = pNode.parent.analysisData.eval;
+            const afterEval = pNode.analysisData.eval;
+
+            if (beforeEval && afterEval) {
+              const beforeCp = beforeEval.type === 'mate' ? Math.sign(beforeEval.value) * 10000 : beforeEval.value;
+              const afterCp = afterEval.type === 'mate' ? Math.sign(afterEval.value) * 10000 : afterEval.value;
+
+              let isPuzzleWorthy = false;
+              
+              if (side === 'white') {
+                if (beforeCp >= -300 && afterCp <= 300 && (beforeCp - afterCp >= 200)) {
+                  isPuzzleWorthy = true;
+                }
+              } else {
+                if (beforeCp <= 300 && afterCp >= -300 && (afterCp - beforeCp >= 200)) {
+                  isPuzzleWorthy = true;
+                }
+              }
+
+              if (isPuzzleWorthy) {
+                extractedPuzzles.push({
+                  fen: pNode.parent.fen,        
+                  bestMove: pNode.analysisData.best_move, 
+                  playedMove: pNode.uci,        
+                  playedMoveAccuracy: pNode.accuracy, 
+                  turn: side,
+                  eval: { type: pNode.analysisData.eval.type, value: pNode.analysisData.eval.value } 
+                });
+              }
+            }
           }
         }
       }
       pNode = pNode.children[0];
       pPly++;
     }
-
 
     const gamesRef = collection(db, `users/${currentUserId.value}/games`)
     const dupQ = query(gamesRef, where('pgnHash', '==', pgnHash))
@@ -1346,7 +1362,6 @@
       const gameDoc = dupSnap.docs[0]
       const gameDocData = gameDoc.data()
       
-      // Merge puzzles so we don't wipe out `solved: true` flags
       const existingPuzzles = gameDocData.puzzles || []
       const mergedPuzzles = extractedPuzzles.map(newP => {
         const oldP = existingPuzzles.find(p => p.fen === newP.fen && p.bestMove === newP.bestMove)

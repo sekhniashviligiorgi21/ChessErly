@@ -314,6 +314,8 @@
       boardAPI.value.hideMoves()
       updateBoardArrows()
     }
+    // BUG FIX: Recalculate engine state so the eval bar properly resets
+    getAccuracy()
   }
 
   function redoMove() {
@@ -608,8 +610,10 @@
       return
     }
 
-    if (status.value === 'correct') {
+    // BUG FIX: Strictly prevent any extra moves if the puzzle has been solved or failed.
+    if (status.value !== 'idle') {
       boardAPI.value.setPosition(currentNode.value.fen)
+      return
     }
 
     if (boardAPI.value) {
@@ -744,7 +748,11 @@
     const playedUci = currentNode.value.uci
     const dbBestMove = currentPuzzle.value.bestMove
 
-    if (['brilliant', 'great', 'best', 'excellent'].includes(acc) || playedUci === dbBestMove) {
+    // BUG FIX: Normalize engine castling targets to match standard board UCI
+    const castlingFix = { 'e1h1': 'e1g1', 'e1a1': 'e1c1', 'e8h8': 'e8g8', 'e8a8': 'e8c8' }
+    const normalizedDbBestMove = castlingFix[dbBestMove] || dbBestMove
+
+    if (['brilliant', 'great', 'best', 'excellent'].includes(acc) || playedUci === normalizedDbBestMove) {
       streak.value += 1
       const basePoints = hintUsed.value ? 8 : 15
       const streakBonus = hintUsed.value ? 0 : (streak.value - 1) * 2
@@ -784,9 +792,13 @@
     if (boardAPI.value && currentPuzzle.value) {
       const bestUci = currentPuzzle.value.bestMove
       const from = bestUci.slice(0, 2)
-      const to = bestUci.slice(2, 4)
+      let to = bestUci.slice(2, 4) // Changed to let
       const promotion = bestUci.length > 4 ? bestUci[4] : undefined
       
+      // BUG FIX: Translate castling coordinates so chess.js doesn't crash
+      const castlingFix = { 'e1h1': 'g1', 'e1a1': 'c1', 'e8h8': 'g8', 'e8a8': 'c8' }
+      if (castlingFix[bestUci]) to = castlingFix[bestUci]
+
       let sanMove = null
       try {
         sanMove = chess.move({ from, to, promotion })
@@ -1111,7 +1123,12 @@
           <!-- Move played in the actual game -->
           <div v-if="playedMoveSan" class="played-move-info">
             <span class="played-move-label">Your move in the game:</span>
-            <span class="played-move-san">{{ prettyMove(playedMoveSan) }}</span>
+            <div style="display: flex; align-items: center; gap: 0.35rem;">
+              <img v-if="currentPuzzle?.playedMoveAccuracy" 
+                   :src="accuracySymbol(currentPuzzle.playedMoveAccuracy)" 
+                   style="width: 18px; height: 18px;" />
+              <span class="played-move-san">{{ prettyMove(playedMoveSan) }}</span>
+            </div>
           </div>
 
           <div class="action-buttons">
