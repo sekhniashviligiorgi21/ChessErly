@@ -181,7 +181,7 @@
     if (!res.ok) throw new Error('Failed to fetch from Lichess')
     const text = await res.text()
     if (!text.trim()) return []
-    return text.trim().split('\n').map(normalizeLichessLine)
+    return text.trim().split('\n').map(normalizeLichess)
   }
 
   async function fetchLichessLast(user) {
