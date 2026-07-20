@@ -30,7 +30,7 @@
   const activeTab = ref('puzzle')
 
   // Computed visibility for Analysis tab
-  const canViewAnalysis = computed(() => status.value === 'correct' || solutionShown.value)
+  const canViewAnalysis = computed(() => status.value === 'correct' || solutionShown.value || status.value === 'wrong')
 
   // --- Hint System ---
   const hintShown = ref(false)
@@ -123,7 +123,13 @@
   const moveData = shallowRef(null)
   const isAnalyzing = ref(false)
   const currentDepth = ref(10)
-  const targetDepth = ref(15)
+  const DEPTH_STORAGE_KEY = 'chesslab_targetDepth'
+  function loadStoredDepth() {
+    const stored = Number(localStorage.getItem(DEPTH_STORAGE_KEY))
+    return stored >= 10 && stored <= 30 ? stored : 15
+  }
+  const targetDepth = ref(loadStoredDepth())
+  
   const sanLine = ref([])
   const excellentSanLine = ref([])
   const thirdSanLine = ref([])
@@ -149,6 +155,7 @@
   const nodeMap = { 0: moveTree }
   const currentNode = shallowRef(moveTree)
   const movesListUCI = ref([])
+  const treeVersion = ref(0)
 
   onMounted(async () => {
     window.addEventListener('keydown', handleKeyDown)
@@ -183,6 +190,135 @@
     localStorage.setItem('chesslab_puzzle_streak', String(val))
   })
 
+  // --- Tree Navigation Logic (Matches Analysis.vue) ---
+  const renderedMoves = computed(() => {
+    treeVersion.value
+    const rows = []
+
+    function makeCell(node, moveNum, showAsStart, depth) {
+      const isWhite = moveNum % 2 === 1
+      return {
+        key: `cell-${node.id}`,
+        node,
+        displayNum: Math.ceil(moveNum / 2),
+        isWhite,
+        showNum: isWhite || showAsStart,
+        variant: depth > 0
+      }
+    }
+
+    function walk(startNode, moveNum, depth = 0, isStartOfLine = true) {
+      let current = startNode
+      let ply = moveNum
+      let firstRow = true
+
+      if (!current.san) {
+        if (current.children.length === 0) return
+        walk(current.children[0], ply, depth, isStartOfLine)
+        for (const variant of current.children.slice(1)) {
+          walk(variant, ply, depth + 1, true)
+        }
+        return
+      }
+
+      while (current) {
+        const mainReply = current.children[0] ?? null
+
+        rows.push({
+          key: `row-${current.id}`,
+          depth,
+          cells: [
+            makeCell(current, ply, firstRow && isStartOfLine, depth),
+            mainReply ? makeCell(mainReply, ply + 1, false, depth) : null
+          ]
+        })
+
+        for (const variant of current.children.slice(1)) {
+          walk(variant, ply + 1, depth + 1, true)
+        }
+
+        if (mainReply) {
+          for (const variant of mainReply.children.slice(1)) {
+            walk(variant, ply + 2, depth + 1, true)
+          }
+        }
+
+        if (!mainReply) break
+        current = mainReply.children[0] ?? null
+        ply += 2
+        firstRow = false
+      }
+    }
+
+    walk(moveTree, 1)
+    return rows
+  })
+
+  function undoMove() {
+    lastMoveSquare.value = null
+    lastMoveAccuracy.value = null
+    if (currentNode.value.parent === null) return
+    chess.undo()
+    currentNode.value = currentNode.value.parent
+    movesListUCI.value.pop()
+    boardAPI.value.setPosition(chess.fen())
+  }
+
+  function redoMove() {
+    lastMoveSquare.value = null
+    lastMoveAccuracy.value = null
+    if (currentNode.value.children.length === 0) return
+    const nextNode = currentNode.value.children[0]
+    let sanMove
+    try { sanMove = chess.move(nextNode.uci) } catch (e) { sanMove = null }
+    if (sanMove) soundForLastMove(sanMove)
+    movesListUCI.value.push(nextNode.uci)
+    currentNode.value = nextNode
+    boardAPI.value.setPosition(nextNode.fen)
+  }
+
+  function undoAccuracy() { undoMove(); getAccuracy(); }
+  function redoAccuracy() { redoMove(); getAccuracy(); }
+
+  function jumpToNode(nodeId) {
+    const node = nodeMap[nodeId]
+    if (!node || node === currentNode.value) return
+
+    const uciMoves = []
+    let current = node
+    while (current.parent !== null) {
+      uciMoves.unshift(current.uci)
+      current = current.parent
+    }
+
+    chess.load(moveTree.fen) // Use puzzle FEN instead of reset
+    for (const uci of uciMoves) {
+      try { chess.move(uci) } catch (e) { console.warn("Failed to apply UCI in jumpToNode", uci, e) }
+    }
+
+    movesListUCI.value = uciMoves
+    currentNode.value = node
+    boardAPI.value.setPosition(node.fen)
+    moveData.value = null
+    isAccuracy.value = ""
+    color.value = ""
+    getAccuracy()
+  }
+
+  function goToStart() { jumpToNode(0) }
+  function goToEnd() {
+    let node = currentNode.value
+    while (node.children.length > 0) node = node.children[0]
+    jumpToNode(node.id)
+  }
+
+  function flipBoard() {
+    if (boardAPI.value) {
+      boardAPI.value.toggleOrientation()
+      isFlipped.value = !isFlipped.value
+    }
+  }
+
   // --- Keyboard Shortcuts ---
   function handleKeyDown(event) {
     if (event.repeat) return
@@ -195,6 +331,18 @@
       showHint()
     } else if (key === 's' && status.value === 'idle') {
       showSolution()
+    } else if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      undoAccuracy()
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      redoAccuracy()
+    } else if (event.key === 'Home') {
+      event.preventDefault()
+      goToStart()
+    } else if (event.key === 'End') {
+      event.preventDefault()
+      goToEnd()
     }
   }
 
@@ -300,8 +448,8 @@
     hintShown.value = false
     hintUsed.value = false
     hintSquare.value = null
-    message.value = `Find the best move for ${currentPuzzle.value.turn === 'white' ? 'White' : 'Black'}.`
-    activeTab.value = 'puzzle' // Reset to puzzle tab
+    message.value = 'Find the best move.'
+    activeTab.value = 'puzzle'
 
     // Reset tree
     chess.load(currentPuzzle.value.fen)
@@ -313,6 +461,7 @@
     }
     currentNode.value = moveTree
     movesListUCI.value = []
+    treeVersion.value++
 
     if (boardAPI.value) {
       const shouldBeFlipped = currentPuzzle.value.turn === 'black'
@@ -343,7 +492,13 @@
   }
 
   async function handleBothMoves(move) {
-    if (status.value !== 'idle' || !currentPuzzle.value) {
+    if (!currentPuzzle.value) {
+      boardAPI.value.setPosition(currentNode.value.fen)
+      return
+    }
+
+    // Allow moves even if failed, but prevent moving if the puzzle is solved
+    if (status.value === 'correct') {
       boardAPI.value.setPosition(currentNode.value.fen)
       return
     }
@@ -376,35 +531,60 @@
       nodeMap[newNode.id] = newNode
       currentNode.value.children.push(newNode)
       currentNode.value = newNode
+      treeVersion.value++
     }
 
     movesListUCI.value.push(uci)
-    await getAccuracy(true) // true = check puzzle solution
+    
+    // checkSolution = true ONLY if status is still 'idle' (meaning they haven't failed yet)
+    await getAccuracy(status.value === 'idle')
   }
 
   async function getAccuracy(checkSolution = false) {
     await cancelAnalysis()
 
     const cached = currentNode.value.analysisData
-    if (cached && cached.depth >= targetDepth.value) {
+    const requiresMultiPV3 = true
+    const hasRequiredMultiPV = !requiresMultiPV3 || !currentNode.value.san || (cached?.topMoves?.length >= 3)
+
+    if (cached && cached.depth >= targetDepth.value && hasRequiredMultiPV) {
       moveData.value = cached
       lastMoveSquare.value = movesListUCI.value.at(-1)?.slice(2, 4) ?? null
       lastMoveAccuracy.value = cached.move_accuracy
       currentDepth.value = cached.depth
       isAnalyzing.value = false
+      if (boardAPI.value) boardAPI.value.hideMoves()
+      
       evalSize()
       moveDescription()
       sanBest()
-      uciLine()
       uciSecondLine()
       uciThirdLine()
+      uciLine()
       drawBestArrow()
+      
       if (checkSolution) checkPuzzleSolution()
       return
     }
 
+    if (cached && !hasRequiredMultiPV) {
+      moveData.value = cached
+      lastMoveSquare.value = movesListUCI.value.at(-1)?.slice(2, 4) ?? null
+      lastMoveAccuracy.value = cached.move_accuracy
+      currentDepth.value = cached.depth
+      
+      evalSize()
+      moveDescription()
+      sanBest()
+      uciSecondLine()
+      uciThirdLine()
+      uciLine()
+      drawBestArrow()
+    }
+
     isAnalyzing.value = true
     bestArrowSquares.value = null
+    if (boardAPI.value) boardAPI.value.hideMoves()
 
     const beforeFen = currentNode.value.parent ? currentNode.value.parent.fen : moveTree.fen
     const afterFen = currentNode.value.fen
@@ -431,20 +611,22 @@
         uciThirdLine()
         drawBestArrow()
 
+        treeVersion.value++
+
         if (checkSolution) checkPuzzleSolution()
       },
       beforeFen,
       afterFen,
       moveTree.fen,
-      3 // MultiPV 3
+      3
     )
   }
 
   function checkPuzzleSolution() {
-    if (status.value !== 'idle') return
+    if (status.value !== 'idle') return // Only check once
+    
     const acc = moveData.value?.move_accuracy
     const playedUci = currentNode.value.uci
-    const playedSan = currentNode.value.san
     const dbBestMove = currentPuzzle.value.bestMove
 
     if (['brilliant', 'great', 'best', 'excellent'].includes(acc) || playedUci === dbBestMove) {
@@ -461,14 +643,13 @@
 
       message.value = streak.value > 1 ? `Correct! +${totalPoints} points (🔥 ${streak.value}x Streak)` : `Correct! +${totalPoints} points.`
       
-      // Mark puzzle as solved in Firestore
       if (currentUser.value && currentPuzzle.value.gameId && currentPuzzle.value.indexInArray !== undefined) {
         updateDoc(doc(db, `users/${currentUser.value.uid}/games`, currentPuzzle.value.gameId), {
           [`puzzles.${currentPuzzle.value.indexInArray}.solved`]: true
         }).catch(e => console.error("Failed to mark puzzle as solved:", e))
       }
       
-      activeTab.value = 'analysis' // Auto switch to analysis tab
+      activeTab.value = 'analysis'
     } else {
       streak.value = 0
       updateRating(-10)
@@ -476,14 +657,21 @@
       playSound('wrong')
       sessionStats.value.failed++
       status.value = 'wrong'
-      message.value = 'Incorrect. That is not the best move. (-10 Rating)'
-
-      // Reset board to puzzle start 
-      if (boardAPI.value) {
-        setTimeout(() => {
-          boardAPI.value.setPosition(currentPuzzle.value.fen)
-        }, 600)
+      
+      // Look up what was played in the actual game
+      const gamePlayedUci = currentPuzzle.value.playedMove
+      let gamePlayedSan = ''
+      if (gamePlayedUci) {
+        const tempChess = new Chess()
+        tempChess.load(currentPuzzle.value.fen)
+        try {
+          const m = tempChess.move({ from: gamePlayedUci.substring(0, 2), to: gamePlayedUci.substring(2, 4), promotion: gamePlayedUci.length > 4 ? gamePlayedUci[4] : undefined })
+          if (m) gamePlayedSan = m.san
+        } catch (e) {}
       }
+
+      message.value = `Incorrect. (-10 Rating). In your game you played ${prettyMove(gamePlayedSan)}. You can keep exploring!`
+      // Do not revert board, let them keep playing
     }
   }
 
@@ -493,16 +681,39 @@
       updateRating(-10)
       popRatingDelta(-10)
       sessionStats.value.failed++
+      status.value = 'wrong'
     }
-    status.value = 'wrong'
     solutionShown.value = true
     message.value = 'Solution shown. Check the analysis tab!'
 
     if (boardAPI.value && currentPuzzle.value) {
-      boardAPI.value.setPosition(currentPuzzle.value.fen)
-      const from = currentPuzzle.value.bestMove.slice(0, 2)
-      const to = currentPuzzle.value.bestMove.slice(2, 4)
-      boardAPI.value.drawMove(from, to, 'green')
+      const bestUci = currentPuzzle.value.bestMove
+      const from = bestUci.slice(0, 2)
+      const to = bestUci.slice(2, 4)
+      const promotion = bestUci.length > 4 ? bestUci[4] : undefined
+      
+      let sanMove = null
+      try {
+        sanMove = chess.move({ from, to, promotion })
+      } catch(e) {}
+
+      if (sanMove) {
+        const existing = currentNode.value.children.find(c => c.uci === bestUci)
+        if (existing) {
+          currentNode.value = existing
+        } else {
+          const newNode = {
+            id: nodeIdCounter++, san: sanMove.san, uci: bestUci, fen: chess.fen(), accuracy: null, analysisData: null, parent: currentNode.value, children: []
+          }
+          nodeMap[newNode.id] = newNode
+          currentNode.value.children.push(newNode)
+          currentNode.value = newNode
+          treeVersion.value++
+        }
+        movesListUCI.value.push(bestUci)
+        boardAPI.value.setPosition(chess.fen())
+        getAccuracy()
+      }
     }
     activeTab.value = 'analysis'
   }
@@ -593,13 +804,13 @@
     const descriptions = {
       great:      { color: '#4c8cb5',  text: ' is a great move!'},
       brilliant:  { color: '#03aea7', text: ' is a brilliant move!!' },
-      book:       { color: '#ad8760',   text: ' is a book move' },
-      best:       { color: '#6ad13f',   text: ' is the best move' },
-      excellent:  { color: '#90bc36',   text: ' is an excellent move' },
+      book:       { color: '#ad8760', text: ' is a book move' },
+      best:       { color: '#6ad13f', text: ' is the best move' },
+      excellent:  { color: '#90bc36', text: ' is an excellent move' },
       good:       { color: '#8eae83', text: ' is a good move' },
-      inaccuracy: { color: '#f2bc43',   text: ' is an inaccuracy' },
-      mistake:    { color: '#f38800',   text: ' is a mistake' },
-      blunder:    { color: '#FF0000',   text: ' is a blunder' },
+      inaccuracy: { color: '#f2bc43', text: ' is an inaccuracy' },
+      mistake:    { color: '#f38800', text: ' is a mistake' },
+      blunder:    { color: '#FF0000', text: ' is a blunder' },
     }
     const config = descriptions[moveData.value?.move_accuracy]
     if (!config) return
@@ -675,12 +886,12 @@
             <div class="evalbar" :class="{ 'is-visible': canViewAnalysis }">
               <div class="evalbar-inner">
                 <template v-if="!isFlipped">
-                  <div class="blackeval" :style="{ height: height + '%' }"></div>
-                  <div class="whiteeval" :style="{ height: (100 - height) + '%' }"></div>
+                  <div class="blackeval" :style="{ height: height + '%', borderRadius: '10px 10px 0 0' }"></div>
+                  <div class="whiteeval" :style="{ height: (100 - height) + '%', borderRadius: '0 0 10px 10px' }"></div>
                 </template>
                 <template v-else>
-                  <div class="whiteeval" :style="{ height: (100 - height) + '%' }"></div>
-                  <div class="blackeval" :style="{ height: height + '%' }"></div>
+                  <div class="whiteeval" :style="{ height: (100 - height) + '%', borderRadius: '10px 10px 0 0' }"></div>
+                  <div class="blackeval" :style="{ height: height + '%', borderRadius: '0 0 10px 10px' }"></div>
                 </template>
               </div>
               <p class="evalnum">{{ formatEval(moveData?.eval) }}</p>
@@ -694,13 +905,13 @@
                 :board-config="{ coordinates: true, animation: { enabled: false } }"
               />
               
-              <!-- Move Classification Icon -->
-              <img
+              <!-- Move Classification Icon Wrapper -->
+              <div
                 v-if="lastMoveSquare && lastMoveAccuracy && canViewAnalysis"
-                :src="accuracySymbol(lastMoveAccuracy)"
-                class="board-acc-icon"
                 :style="squareStyle(lastMoveSquare)"
-              />
+              >
+                <img :src="accuracySymbol(lastMoveAccuracy)" class="board-acc-icon" />
+              </div>
               
               <!-- Hint Highlight Circle -->
               <div v-if="hintSquare" :style="squareStyle(hintSquare)" class="hint-overlay">
@@ -712,6 +923,15 @@
           <div class="player-bar bottom">
             <span class="player-color-dot" :class="currentPuzzle?.turn === 'white' ? 'black' : 'white'"></span>
             <span class="player-name">Your Past Self</span>
+          </div>
+
+          <!-- Board Tools (Navigation) -->
+          <div class="boardtools" v-if="canViewAnalysis">
+            <button class="jumpstart" @click="goToStart" :disabled="currentNode.parent === null" title="Jump to start"><<</button>
+            <button class="undo" @click="undoAccuracy" title="previous" :disabled="currentNode.parent === null"><-</button>
+            <button class="reverse" @click="flipBoard" title="flip board">↳↰</button>
+            <button class="redo" title="next" @click="redoAccuracy" :disabled="currentNode.children.length === 0">-></button>
+            <button class="jumpend" @click="goToEnd" :disabled="currentNode.children.length === 0" title="Jump to end">>></button>
           </div>
         </div>
       </div>
@@ -784,7 +1004,7 @@
           </div>
           
           <div class="bottom-row">
-            <p class="kbd-hint">Space: Next &nbsp;·&nbsp; H: Hint &nbsp;·&nbsp; S: Solution</p>
+            <p class="kbd-hint">Space: Next &nbsp;·&nbsp; H: Hint &nbsp;·&nbsp; S: Solution &nbsp;·&nbsp; Arrows: Navigate</p>
             <button class="icon-btn-sound" @click="soundOn = !soundOn">
               {{ soundOn ? '🔊' : '🔇' }}
             </button>
@@ -806,21 +1026,21 @@
               
               <div class="line">
                 <span class="evalnum2">{{ formatEval(moveData?.eval) }}</span>
-                <span v-for="(move, idx) in sanLine" :key="'best-' + idx" class="line-move">
+                <span v-for="(move, idx) in sanLine" :key="'best-' + idx" class="line-move" @click="playLineMoves(moveData.best_line, idx + 1)">
                   {{ prettyMove(move) }}&nbsp;
                 </span>
               </div>
 
               <div class="secondline" v-if="excellentSanLine.length">
                 <span class="evalnum3">{{ moveData?.excellent_eval != null ? (moveData.excellent_eval / 100).toFixed(2) : "" }}</span>
-                <span v-for="(move, idx) in excellentSanLine" :key="'exc-' + idx" class="line-move">
+                <span v-for="(move, idx) in excellentSanLine" :key="'exc-' + idx" class="line-move" @click="playLineMoves(moveData.excellent_line, idx + 1)">
                   {{ prettyMove(move) }}&nbsp;
                 </span>
               </div>
 
               <div class="secondline" v-if="thirdSanLine.length">
                 <span class="evalnum3">{{ moveData?.third_eval != null ? (moveData.third_eval / 100).toFixed(2) : "" }}</span>
-                <span v-for="(move, idx) in thirdSanLine" :key="'third-' + idx" class="line-move">
+                <span v-for="(move, idx) in thirdSanLine" :key="'third-' + idx" class="line-move" @click="playLineMoves(moveData.third_line, idx + 1)">
                   {{ prettyMove(move) }}&nbsp;
                 </span>
               </div>
@@ -831,6 +1051,30 @@
             <div v-else class="move-data">
               <p class="depthnum">Waiting for engine...</p>
             </div>
+
+            <!-- Moves List (Tree) -->
+            <div class="moveslist-wrapper">
+              <div class="moveslist">
+                <template v-for="row in renderedMoves" :key="row.key">
+                  <div class="move-row" :class="{ variant: row.depth > 0 }" :style="{ '--indent': `${row.depth * 1.05}rem` }">
+                    <div
+                      v-for="(cell, index) in row.cells"
+                      :key="cell ? cell.key : `${row.key}-empty-${index}`"
+                      class="move-cell"
+                      :class="[{ active: cell && cell.node === currentNode, variant: cell && cell.variant }, { empty: !cell }]"
+                      @click="cell && jumpToNode(cell.node.id)"
+                    >
+                      <template v-if="cell">
+                        <span v-if="cell.showNum" class="move-num">{{ cell.displayNum }}{{ cell.isWhite ? '.' : '...' }}</span>
+                        <span class="move-san-text">{{ cell.node.san }}</span>
+                        <img v-if="cell.node.accuracy" :src="accuracySymbol(cell.node.accuracy)" class="acc-badge" :class="cell.node.accuracy"/>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+
           </div>
         </div>
 
@@ -872,7 +1116,7 @@
 
   .title-slot { grid-area: title; min-width: 0; }
   .board-area { grid-area: board; display: flex; justify-content: center; width: 100%; min-width: 0; }
-  .puzzle-sidebar { grid-area: sidebar; max-width: 380px; width: 100%; margin: 0 auto; }
+  .puzzle-sidebar { grid-area: sidebar; max-width: 380px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; }
   .empty-state { grid-column: 1; grid-row: 2 / 4; }
   @media (min-width: 768px) { .empty-state { grid-column: 2; grid-row: 1 / 3; } }
   @media (min-width: 1200px) { .empty-state { grid-column: 2 / 4; grid-row: 1; } }
@@ -952,7 +1196,6 @@
 
   /* --- Sidebar Layout --- */
   .puzzle-sidebar {
-    display: flex; flex-direction: column; min-height: 450px;
     background: linear-gradient(145deg, var(--panel-1), var(--panel-2));
     border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px;
     box-shadow: 0 15px 35px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.1);
@@ -1055,6 +1298,84 @@
   }
   .icon-btn-sound:hover { background: rgba(255, 255, 255, 0.1); }
 
+  /* --- Board Tools (Navigation) --- */
+  .boardtools {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+    align-items: center;
+    min-height: 3.2rem;
+    width: 100%;
+    box-sizing: border-box;
+    background: linear-gradient(145deg, var(--panel-1), var(--panel-2));
+    border: 2px solid rgba(182, 173, 144, 0.4);
+    padding: 0.5rem 1rem;
+    border-radius: 10px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    margin: 0.4rem 0 0 0;
+    flex-wrap: wrap;
+  }
+  .jumpstart, .undo, .redo, .reverse, .jumpend {
+    background-color: var(--btn-idle);
+    width: clamp(35px, 8vw, 40px);
+    height: clamp(35px, 8vw, 40px);
+    border: none;
+    border-radius: 15px;
+    font-size: clamp(16px, 4vw, 20px);
+    color: #e8e8d0;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+  }
+  .jumpstart:disabled, .undo:disabled, .redo:disabled, .jumpend:disabled {
+    opacity: 0.4; cursor: not-allowed;
+  }
+  .jumpstart:hover:not(:disabled), .undo:hover:not(:disabled), .redo:hover:not(:disabled), 
+  .reverse:hover, .jumpend:hover:not(:disabled) {
+    background: linear-gradient(145deg, var(--panel-1), var(--panel-2));
+    border-color: rgba(232, 232, 208, 0.6);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  }
+
+  /* --- Moves List (Tree) --- */
+  .moveslist-wrapper {
+    margin-top: 1rem; 
+    overflow-y: auto; 
+    max-height: 250px;
+    scrollbar-width: thin;
+    border-radius: 12px;
+    background: linear-gradient(135deg, var(--list-1), var(--list-2));
+    box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.25);
+    padding: 0.5rem;
+  }
+  .moveslist {
+    display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.9rem;
+  }
+  .move-row {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.4rem; align-items: start;
+    margin-left: var(--indent, 0rem); padding-left: 0.35rem; position: relative;
+  }
+  .move-row.variant { border-left: 2px solid rgba(232, 232, 208, 0.16); }
+  .move-cell {
+    min-height: 2.2rem; padding: 0.4rem 0.6rem; border-radius: 8px; cursor: pointer;
+    color: #f4f0e3; font-weight: 500; transition: all 0.15s ease; display: flex;
+    align-items: center; flex-wrap: wrap; gap: 0.3rem; background: rgba(0, 0, 0, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.06); box-sizing: border-box; overflow: hidden; user-select: none;
+  }
+  .move-cell:hover { background: rgba(103, 122, 228, 0.18); }
+  .move-cell.active {
+    background: linear-gradient(135deg, rgba(103, 122, 228, 0.42), rgba(103, 122, 228, 0.22));
+    border-color: rgba(220, 228, 255, 0.7); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 18px rgba(103, 122, 228, 0.25);
+  }
+  .move-cell.variant { color: #dbe4ff; background: rgba(255, 255, 255, 0.06); }
+  .move-cell.empty { pointer-events: none; background: transparent; border-color: transparent; box-shadow: none; }
+  .move-num {
+    color: rgba(232, 232, 208, 0.72); font-size: 0.78em; font-weight: 700; padding: 0.15rem 0.45rem;
+    border-radius: 999px; background: rgba(0, 0, 0, 0.16);
+  }
+  .move-san-text { font-weight: 600; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .acc-badge { width: 16px; height: 16px; border-radius: 50%; margin-left: 2px; }
+
   /* --- Analysis Panel Styles --- */
   .analysis-panel {
     display: flex; flex-direction: column; height: 100%; gap: 0.5rem;
@@ -1085,7 +1406,8 @@
     flex-shrink: 0; min-width: 4.4rem; width: auto; padding: 0 0.5rem; text-align: center;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .line-move { padding: 0 2px; }
+  .line-move { padding: 0 2px; cursor: pointer; }
+  .line-move:hover { background: rgba(103, 122, 228, 0.3); border-radius: 4px; }
 
   .accuracydescribtion {
     font-weight: 500; text-align: center; font-size: clamp(1rem, 2.1vw, 1.2rem);
@@ -1098,8 +1420,11 @@
 
   /* --- Board Overlays --- */
   .board-acc-icon {
-    position: absolute; width: 4.5%; height: 4.5%; border-radius: 50%; pointer-events: none; z-index: 20;
-    transform: translate(-50%, -50%);
+    width: 70%; 
+    height: 70%; 
+    border-radius: 50%; 
+    pointer-events: none; 
+    z-index: 20;
   }
 
   .hint-overlay {

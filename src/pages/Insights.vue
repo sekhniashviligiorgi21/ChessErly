@@ -460,14 +460,14 @@
         <div v-else class="dashboard-layout">
           <div class="tab-nav-wrapper">
             <div class="tab-nav">
-              <button class="tab-btn" :class="{ active: activeTab === 'overview' }"  @click="setTab('overview')">1. Overview</button>
-              <button class="tab-btn" :class="{ active: activeTab === 'moves' }"     @click="setTab('moves')">2. Move Classes</button>
-              <button class="tab-btn" :class="{ active: activeTab === 'colors' }"    @click="setTab('colors')">3. Colors</button>
-              <button class="tab-btn" :class="{ active: activeTab === 'pieces' }"    @click="setTab('pieces')">4. Pieces</button>
-              <button class="tab-btn" :class="{ active: activeTab === 'openings' }"  @click="setTab('openings')">5. Openings</button>
-              <button class="tab-btn" :class="{ active: activeTab === 'stamina' }"   @click="setTab('stamina')">6. Stamina</button>
-              <button class="tab-btn" :class="{ active: activeTab === 'playstyle' }" @click="setTab('playstyle')">7. Playstyle</button>
-              <button class="tab-btn" :class="{ active: activeTab === 'heatmap' }"   @click="setTab('heatmap')">8. Heatmap</button>
+              <button class="tab-btn" :class="{ active: activeTab === 'overview' }"  @click="setTab('overview')">Overview</button>
+              <button class="tab-btn" :class="{ active: activeTab === 'moves' }"     @click="setTab('moves')">Move Classes</button>
+              <button class="tab-btn" :class="{ active: activeTab === 'colors' }"    @click="setTab('colors')">Colors</button>
+              <button class="tab-btn" :class="{ active: activeTab === 'pieces' }"    @click="setTab('pieces')">Pieces</button>
+              <button class="tab-btn" :class="{ active: activeTab === 'openings' }"  @click="setTab('openings')">Openings</button>
+              <button class="tab-btn" :class="{ active: activeTab === 'stamina' }"   @click="setTab('stamina')">Stamina</button>
+              <button class="tab-btn" :class="{ active: activeTab === 'playstyle' }" @click="setTab('playstyle')">Playstyle</button>
+              <button class="tab-btn" :class="{ active: activeTab === 'heatmap' }"   @click="setTab('heatmap')">Heatmap</button>
             </div>
           </div>
 
