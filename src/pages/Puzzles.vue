@@ -26,12 +26,9 @@
 
   const currentPuzzle = shallowRef(null)
   const status = ref('idle') // 'idle', 'correct', 'wrong'
-  const message = ref('Find the best move.')
   const activeTab = ref('puzzle')
 
-  // Analysis (eval bar, engine lines, move tree navigation) only unlocks once the
-  // puzzle has actually been solved or the solution has been revealed - getting it
-  // wrong on its own should not open it up.
+  // Analysis only unlocks once the puzzle has actually been solved or revealed
   const canViewAnalysis = computed(() => status.value === 'correct' || solutionShown.value)
 
   // --- Hint System ---
@@ -43,8 +40,6 @@
     if (status.value !== 'idle') return
     hintShown.value = true
     hintUsed.value = true
-    
-    // Highlight the piece that needs to move
     if (currentPuzzle.value?.bestMove) {
       hintSquare.value = currentPuzzle.value.bestMove.slice(0, 2)
     }
@@ -98,9 +93,29 @@
     else playSound('move')
   }
 
-  // --- Rating Delta Popup ---
+  // --- Rating Delta Popup & Animation ---
   const ratingDelta = ref(null)
   let ratingDeltaKey = 0
+  const userRating = ref(Number(localStorage.getItem('chesslab_puzzle_rating')) || 1200)
+  const displayRating = ref(userRating.value)
+
+  function animateRating(target) {
+    const start = displayRating.value
+    const diff = target - start
+    const duration = 800
+    const steps = 20
+    const stepTime = duration / steps
+    let currentStep = 0
+    const timer = setInterval(() => {
+        currentStep++
+        displayRating.value = Math.round(start + (diff * (currentStep / steps)))
+        if (currentStep >= steps) {
+            displayRating.value = target
+            clearInterval(timer)
+        }
+    }, stepTime)
+  }
+
   function popRatingDelta(delta) {
     ratingDeltaKey++
     const key = ratingDeltaKey
@@ -115,7 +130,6 @@
   const sessionStats = ref(savedStats)
   const streak = ref(Number(localStorage.getItem('chesslab_puzzle_streak')) || 0)
 
-  const userRating = ref(Number(localStorage.getItem('chesslab_puzzle_rating')) || 1200)
   const boardAPI = shallowRef(null)
   const isFlipped = ref(false)
 
@@ -126,6 +140,7 @@
   const isAnalyzing = ref(false)
   const currentDepth = ref(10)
   const DEPTH_STORAGE_KEY = 'chesslab_targetDepth'
+  
   function loadStoredDepth() {
     const stored = Number(localStorage.getItem(DEPTH_STORAGE_KEY))
     return stored >= 10 && stored <= 30 ? stored : 15
@@ -192,7 +207,7 @@
     localStorage.setItem('chesslab_puzzle_streak', String(val))
   })
 
-  // --- Tree Navigation Logic (Matches Analysis.vue) ---
+  // --- Tree Navigation Logic ---
   const renderedMoves = computed(() => {
     treeVersion.value
     const rows = []
@@ -293,7 +308,7 @@
       current = current.parent
     }
 
-    chess.load(moveTree.fen) // Use puzzle FEN instead of reset
+    chess.load(moveTree.fen)
     for (const uci of uciMoves) {
       try { chess.move(uci) } catch (e) { console.warn("Failed to apply UCI in jumpToNode", uci, e) }
     }
@@ -318,6 +333,69 @@
     if (boardAPI.value) {
       boardAPI.value.toggleOrientation()
       isFlipped.value = !isFlipped.value
+    }
+  }
+
+  // Play lines functionality
+  function applyUciMove(uci) {
+      const from = uci.slice(0, 2)
+      let to = uci.slice(2, 4)
+      const promotion = uci.length > 4 ? uci[4] : undefined
+
+      const castlingFix = { 'e1h1': 'g1', 'e1a1': 'c1', 'e8h8': 'g8', 'e8a8': 'c8' }
+      if (castlingFix[uci]) to = castlingFix[uci]
+
+      let sanMove;
+      try { sanMove = chess.move({ from, to, promotion: promotion ?? undefined }) }
+      catch (e) { return false }
+      if (!sanMove) return false
+
+      const normalizedUci = `${from}${to}${promotion ?? ''}`
+      const existing = currentNode.value.children.find(c => c.uci === normalizedUci)
+      
+      if (existing) {
+        currentNode.value = existing
+      } else {
+        const newNode = {
+          id: nodeIdCounter++, san: sanMove.san, uci: normalizedUci, fen: chess.fen(), accuracy: null, parent: currentNode.value, children: []
+        }
+        nodeMap[newNode.id] = newNode
+        currentNode.value.children.push(newNode)
+        currentNode.value = newNode
+        treeVersion.value++
+      }
+
+      movesListUCI.value.push(normalizedUci)
+      return sanMove
+  }
+
+  function playLineMoves(uciList, count) {
+      if (!uciList) return
+      let lastSanMove = null
+      for (let i = 0; i < count; i++) {
+        const uci = uciList[i]
+        if (!uci) break
+        const result = applyUciMove(uci)
+        if (!result) break
+        lastSanMove = result
+      }
+      if (lastSanMove) soundForLastMove(lastSanMove)
+      boardAPI.value.setPosition(chess.fen())
+      treeVersion.value++
+      getAccuracy()
+  }
+
+  // Tap-to-undo logic for wrong moves
+  function handleBoardInteraction(e) {
+    if (status.value === 'wrong') {
+      e.stopPropagation()
+      e.preventDefault()
+      undoMove()
+      status.value = 'idle'
+      if (boardAPI.value) {
+        boardAPI.value.hideMoves()
+        updateBoardArrows()
+      }
     }
   }
 
@@ -394,6 +472,7 @@
       } else {
         await setDoc(statRef, { rating: userRating.value })
       }
+      displayRating.value = userRating.value
       localStorage.setItem('chesslab_puzzle_rating', String(userRating.value))
     } catch (e) {
       console.error("Failed to fetch rating:", e)
@@ -402,6 +481,7 @@
 
   async function updateRating(delta) {
     userRating.value += delta
+    animateRating(userRating.value)
     localStorage.setItem('chesslab_puzzle_rating', String(userRating.value))
     if (currentUser.value) {
       try {
@@ -450,7 +530,6 @@
     hintShown.value = false
     hintUsed.value = false
     hintSquare.value = null
-    message.value = 'Find the best move.'
     activeTab.value = 'puzzle'
 
     // Reset tree
@@ -473,7 +552,11 @@
       }
       boardAPI.value.setPosition(currentPuzzle.value.fen)
       boardAPI.value.hideMoves()
-      updateBoardArrows()
+      
+      // Delay board arrows slightly to ensure board has rendered the new FEN first
+      setTimeout(() => {
+        updateBoardArrows()
+      }, 50)
     }
 
     getAccuracy()
@@ -511,7 +594,7 @@
       boardAPI.value.hideMoves()
       updateBoardArrows()
     }
-    hintSquare.value = null // Clear hint highlight on move
+    hintSquare.value = null 
 
     const uci = move.promotion ? `${move.from}${move.to}${move.promotion}` : `${move.from}${move.to}`
     let sanMove
@@ -543,7 +626,7 @@
 
     movesListUCI.value.push(uci)
     
-    // checkSolution = true ONLY if status is still 'idle' (meaning they haven't failed yet)
+    // checkSolution = true ONLY if status is still 'idle'
     await getAccuracy(status.value === 'idle')
   }
 
@@ -633,7 +716,7 @@
   }
 
   function checkPuzzleSolution() {
-    if (status.value !== 'idle') return // Only check once
+    if (status.value !== 'idle') return 
     
     const acc = moveData.value?.move_accuracy
     const playedUci = currentNode.value.uci
@@ -650,16 +733,12 @@
       updateRating(totalPoints)
       popRatingDelta(totalPoints)
       playSound('correct')
-
-      message.value = streak.value > 1 ? `Correct! +${totalPoints} points (🔥 ${streak.value}x Streak)` : `Correct! +${totalPoints} points.`
       
       if (currentUser.value && currentPuzzle.value.gameId && currentPuzzle.value.indexInArray !== undefined) {
         updateDoc(doc(db, `users/${currentUser.value.uid}/games`, currentPuzzle.value.gameId), {
           [`puzzles.${currentPuzzle.value.indexInArray}.solved`]: true
         }).catch(e => console.error("Failed to mark puzzle as solved:", e))
       }
-      
-      activeTab.value = 'analysis'
     } else {
       streak.value = 0
       updateRating(-10)
@@ -667,21 +746,6 @@
       playSound('wrong')
       sessionStats.value.failed++
       status.value = 'wrong'
-      
-      // Look up what was played in the actual game
-      const gamePlayedUci = currentPuzzle.value.playedMove
-      let gamePlayedSan = ''
-      if (gamePlayedUci) {
-        const tempChess = new Chess()
-        tempChess.load(currentPuzzle.value.fen)
-        try {
-          const m = tempChess.move({ from: gamePlayedUci.substring(0, 2), to: gamePlayedUci.substring(2, 4), promotion: gamePlayedUci.length > 4 ? gamePlayedUci[4] : undefined })
-          if (m) gamePlayedSan = m.san
-        } catch (e) {}
-      }
-
-      message.value = `Incorrect. (-10 Rating). In your game you played ${prettyMove(gamePlayedSan)}. You can keep exploring!`
-      // Do not revert board, let them keep playing
     }
   }
 
@@ -694,7 +758,6 @@
       status.value = 'wrong'
     }
     solutionShown.value = true
-    message.value = 'Solution shown. Check the analysis tab!'
 
     if (boardAPI.value && currentPuzzle.value) {
       const bestUci = currentPuzzle.value.bestMove
@@ -728,9 +791,6 @@
     activeTab.value = 'analysis'
   }
 
-  // Draws the persistent "you played" arrow (blue) plus, once the puzzle has been
-  // solved or the solution shown, the engine's recommended arrow (green) - both at
-  // once via setShapes so neither call clobbers the other.
   function updateBoardArrows() {
     if (!boardAPI.value) return
     const shapes = []
@@ -848,8 +908,6 @@
     return prettyMove(bestMoveSan.value) + " was the best"
   }
 
-  // Full-square overlay (used only for the hint highlight circle, which needs to
-  // be centered in the square rather than pinned to a corner).
   function squareStyle(square) {
     if (!square) return {}
     const file = square.charCodeAt(0) - 97
@@ -872,8 +930,6 @@
     }
   }
 
-  // Small corner-badge positioning for the move-classification icon, matching
-  // the sizing/placement used in Analysis.vue.
   function accuracyIconStyle(square) {
     if (!square) return {}
     const file = square.charCodeAt(0) - 97
@@ -940,16 +996,28 @@
             </div>
 
             <div class="board-col">
-              <TheChessboard
-                class="game-board"
-                @move="handleBothMoves"
-                @board-created="onBoardCreated"
-                :board-config="{ coordinates: true, animation: { enabled: false } }"
-              />
+              <div class="chessboard-click-wrapper" @mousedown.capture="handleBoardInteraction" @touchstart.capture="handleBoardInteraction">
+                <TheChessboard
+                  class="game-board"
+                  @move="handleBothMoves"
+                  @board-created="onBoardCreated"
+                  :board-config="{ coordinates: true, animation: { enabled: false } }"
+                />
+              </div>
+
+              <!-- Status or Move Classification Icon -->
+              <svg v-if="status === 'correct' && lastMoveSquare" class="board-acc-icon status-icon" viewBox="0 0 24 24" :style="accuracyIconStyle(lastMoveSquare)">
+                 <circle cx="12" cy="12" r="10" fill="#6ad13f" />
+                 <path d="M7 13l3 3 7-7" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+              </svg>
               
-              <!-- Move Classification Icon -->
+              <svg v-else-if="status === 'wrong' && lastMoveSquare" class="board-acc-icon status-icon" viewBox="0 0 24 24" :style="accuracyIconStyle(lastMoveSquare)">
+                 <circle cx="12" cy="12" r="10" fill="#ff4c4c" />
+                 <path d="M8 8l8 8M16 8l-8 8" stroke="#fff" stroke-width="2.5" stroke-linecap="round" fill="none" />
+              </svg>
+
               <img
-                v-if="lastMoveSquare && lastMoveAccuracy && canViewAnalysis"
+                v-else-if="lastMoveSquare && lastMoveAccuracy && canViewAnalysis"
                 :src="accuracySymbol(lastMoveAccuracy)"
                 class="board-acc-icon"
                 :style="accuracyIconStyle(lastMoveSquare)"
@@ -1000,7 +1068,7 @@
           <div class="rating-block">
             <span class="rating-label">Rating</span>
             <div class="rating-row">
-              <span class="rating-value">{{ userRating }}</span>
+              <span class="rating-value">{{ displayRating }}</span>
               <Transition name="pop">
                 <span
                   v-if="ratingDelta"
@@ -1018,8 +1086,10 @@
             </div>
           </div>
 
-          <div class="chat-bubble" :class="status">
-            <p>{{ message }}</p>
+          <!-- Nice White/Black To Play Text -->
+          <div class="turn-indicator">
+            <span v-if="currentPuzzle?.turn === 'white'" class="turn-text white-turn">⚪ White to Play</span>
+            <span v-else class="turn-text black-turn">⚫ Black to Play</span>
           </div>
 
           <div class="action-buttons">
@@ -1189,6 +1259,12 @@
   .board-col { flex: 1 1 auto; min-width: 0; position: relative; display: flex; flex-direction: column; }
   .game-board { width: 100% !important; height: auto !important; aspect-ratio: 1 / 1 !important; display: block; }
 
+  .chessboard-click-wrapper {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+
   :deep(.cg-wrap) {
     width: 100% !important; height: 100% !important; overflow: hidden;
     border-radius: 8px; box-shadow: 0 15px 40px rgba(0, 0, 0, 0.4);
@@ -1303,17 +1379,20 @@
     background: rgba(255, 165, 0, 0.15); border: 1px solid rgba(255, 165, 0, 0.3); border-radius: 6px;
   }
 
-  .chat-bubble {
-    padding: 1rem; border-radius: 12px; font-size: 0.95rem; font-weight: 500; text-align: center;
-    color: #f4f0e3; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.08);
-    transition: all 0.3s ease;
+  .turn-indicator {
+    text-align: center;
+    padding: 0.75rem 1rem;
+    border-radius: 12px;
+    background: rgba(0, 0, 0, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    margin-top: 0.5rem;
+    font-weight: 700;
+    font-size: 1.1rem;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
   }
-  .chat-bubble.correct {
-    color: #a8d97a; background: rgba(168, 217, 122, 0.1); border-color: rgba(168, 217, 122, 0.2);
-  }
-  .chat-bubble.wrong {
-    color: #ff8a80; background: rgba(255, 138, 128, 0.1); border-color: rgba(255, 138, 128, 0.2);
-  }
+  .white-turn { color: #f4f0e3; }
+  .black-turn { color: #1a1a1a; text-shadow: 0 0 2px rgba(255,255,255,0.5); }
 
   .action-buttons {
     margin-top: auto; display: flex; flex-direction: column; gap: 0.75rem;
@@ -1466,6 +1545,11 @@
     border-radius: 50%;
     pointer-events: none;
     z-index: 20;
+  }
+  
+  .status-icon {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    z-index: 21;
   }
 
   .hint-overlay {
