@@ -139,7 +139,7 @@
     importSite.value === 'pgn' || importSite.value === 'fen' || importSite.value === 'library'
   )
 
-  function normalizeLichessLine(line) {
+  function normalizeLichess(line) {
     const lGame = JSON.parse(line)
     let wRes = 'draw', bRes = 'draw'
     if (lGame.winner === 'white') { wRes = 'win'; bRes = 'lose' }

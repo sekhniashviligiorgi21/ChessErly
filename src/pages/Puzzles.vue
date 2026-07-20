@@ -28,8 +28,33 @@
   const status = ref('idle') // 'idle', 'correct', 'wrong'
   const activeTab = ref('puzzle')
 
-  // Analysis only unlocks once the puzzle has actually been solved or revealed
-  const canViewAnalysis = computed(() => status.value === 'correct' || solutionShown.value)
+  // Analysis unlocks as soon as a move is made (correct or wrong) or solution is shown
+  const canViewAnalysis = computed(() => status.value !== 'idle' || solutionShown.value)
+
+  // --- Played Move Info ---
+  const playedMoveSan = ref('')
+
+  function computePlayedMoveSan() {
+    if (!currentPuzzle.value?.playedMove) {
+      playedMoveSan.value = ''
+      return
+    }
+    try {
+      const tempChess = new Chess(currentPuzzle.value.fen)
+      const uci = currentPuzzle.value.playedMove
+      const from = uci.slice(0, 2)
+      let to = uci.slice(2, 4)
+      const promotion = uci.length > 4 ? uci[4] : undefined
+
+      const castlingFix = { 'e1h1': 'g1', 'e1a1': 'c1', 'e8h8': 'g8', 'e8a8': 'c8' }
+      if (castlingFix[uci]) to = castlingFix[uci]
+
+      const move = tempChess.move({ from, to, promotion })
+      playedMoveSan.value = move ? move.san : ''
+    } catch (e) {
+      playedMoveSan.value = ''
+    }
+  }
 
   // --- Hint System ---
   const hintShown = ref(false)
@@ -281,6 +306,16 @@
     boardAPI.value.setPosition(chess.fen())
   }
 
+  function undoMoveAndResetStatus() {
+    undoMove()
+    status.value = 'idle'
+    activeTab.value = 'puzzle'
+    if (boardAPI.value) {
+      boardAPI.value.hideMoves()
+      updateBoardArrows()
+    }
+  }
+
   function redoMove() {
     lastMoveSquare.value = null
     lastMoveAccuracy.value = null
@@ -383,20 +418,6 @@
       boardAPI.value.setPosition(chess.fen())
       treeVersion.value++
       getAccuracy()
-  }
-
-  // Tap-to-undo logic for wrong moves
-  function handleBoardInteraction(e) {
-    if (status.value === 'wrong') {
-      e.stopPropagation()
-      e.preventDefault()
-      undoMove()
-      status.value = 'idle'
-      if (boardAPI.value) {
-        boardAPI.value.hideMoves()
-        updateBoardArrows()
-      }
-    }
   }
 
   // --- Keyboard Shortcuts ---
@@ -525,6 +546,7 @@
     }
 
     currentPuzzle.value = puzzleQueue.value.pop()
+    computePlayedMoveSan()
     status.value = 'idle'
     solutionShown.value = false
     hintShown.value = false
@@ -795,10 +817,7 @@
     if (!boardAPI.value) return
     const shapes = []
 
-    if (currentPuzzle.value?.playedMove) {
-      const uci = currentPuzzle.value.playedMove
-      shapes.push({ orig: uci.slice(0, 2), dest: uci.slice(2, 4), brush: 'blue' })
-    }
+    // Played-move arrow removed; it's now shown as text in the sidebar.
 
     if (status.value !== 'idle' && bestArrowSquares.value) {
       shapes.push({ orig: bestArrowSquares.value.from, dest: bestArrowSquares.value.to, brush: 'green' })
@@ -996,14 +1015,12 @@
             </div>
 
             <div class="board-col">
-              <div class="chessboard-click-wrapper" @mousedown.capture="handleBoardInteraction" @touchstart.capture="handleBoardInteraction">
-                <TheChessboard
-                  class="game-board"
-                  @move="handleBothMoves"
-                  @board-created="onBoardCreated"
-                  :board-config="{ coordinates: true, animation: { enabled: false } }"
-                />
-              </div>
+              <TheChessboard
+                class="game-board"
+                @move="handleBothMoves"
+                @board-created="onBoardCreated"
+                :board-config="{ coordinates: true, animation: { enabled: false } }"
+              />
 
               <!-- Status or Move Classification Icon -->
               <svg v-if="status === 'correct' && lastMoveSquare" class="board-acc-icon status-icon" viewBox="0 0 24 24" :style="accuracyIconStyle(lastMoveSquare)">
@@ -1092,6 +1109,12 @@
             <span v-else class="turn-text black-turn">⚫ Black to Play</span>
           </div>
 
+          <!-- Move played in the actual game -->
+          <div v-if="playedMoveSan" class="played-move-info">
+            <span class="played-move-label">Your move in the game:</span>
+            <span class="played-move-san">{{ prettyMove(playedMoveSan) }}</span>
+          </div>
+
           <div class="action-buttons">
             <button v-if="status === 'idle' && !hintShown" class="tool-btn primary" @click="showHint">
               💡 Hint
@@ -1104,6 +1127,9 @@
               Next Puzzle →
             </button>
             
+            <button v-if="status === 'wrong' && !solutionShown" class="tool-btn outline" @click="undoMoveAndResetStatus">
+              ↩️ Try Again
+            </button>
             <button v-if="status === 'wrong' && !solutionShown" class="tool-btn outline" @click="showSolution">
               Show Solution
             </button>
@@ -1259,12 +1285,6 @@
   .board-col { flex: 1 1 auto; min-width: 0; position: relative; display: flex; flex-direction: column; }
   .game-board { width: 100% !important; height: auto !important; aspect-ratio: 1 / 1 !important; display: block; }
 
-  .chessboard-click-wrapper {
-    position: relative;
-    width: 100%;
-    height: 100%;
-  }
-
   :deep(.cg-wrap) {
     width: 100% !important; height: 100% !important; overflow: hidden;
     border-radius: 8px; box-shadow: 0 15px 40px rgba(0, 0, 0, 0.4);
@@ -1394,6 +1414,29 @@
   .white-turn { color: #f4f0e3; }
   .black-turn { color: #1a1a1a; text-shadow: 0 0 2px rgba(255,255,255,0.5); }
 
+  .played-move-info {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.7rem 1rem;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    font-size: 0.95rem;
+  }
+  .played-move-label {
+    color: rgba(244, 240, 227, 0.6);
+    font-weight: 500;
+  }
+  .played-move-san {
+    font-family: "JetBrains Mono", monospace;
+    font-weight: 700;
+    color: var(--text-highlight);
+    font-size: 1.15rem;
+    letter-spacing: 0.5px;
+  }
+
   .action-buttons {
     margin-top: auto; display: flex; flex-direction: column; gap: 0.75rem;
   }
@@ -1462,6 +1505,7 @@
     overflow-y: auto; 
     max-height: 250px;
     scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.2) rgba(0, 0, 0, 0.2);
     border-radius: 12px;
     background: linear-gradient(135deg, var(--list-1), var(--list-2));
     box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.25);
@@ -1519,6 +1563,7 @@
     gap: 0.5rem; font-size: clamp(0.85rem, 2vw, 1rem); padding: 0.5rem; margin: 8px 0;
     background: rgba(0, 0, 0, 0.25); border-radius: 10px; color: #eae4d8;
     box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.4); overflow-x: auto; scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.2) rgba(0, 0, 0, 0.2);
   }
   .evalnum2, .evalnum3 {
     font-size: clamp(1rem, 2vw, 1.3rem); color: #171717; background-color: #606847; border-radius: 10px;
@@ -1571,5 +1616,30 @@
     0% { transform: scale(0.7); opacity: 0.5; }
     50% { transform: scale(1.1); opacity: 1; }
     100% { transform: scale(0.7); opacity: 0.5; }
+  }
+
+  /* --- Pretty Scrollbars --- */
+  .line::-webkit-scrollbar,
+  .secondline::-webkit-scrollbar,
+  .moveslist-wrapper::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .line::-webkit-scrollbar-track,
+  .secondline::-webkit-scrollbar-track,
+  .moveslist-wrapper::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 3px;
+  }
+  .line::-webkit-scrollbar-thumb,
+  .secondline::-webkit-scrollbar-thumb,
+  .moveslist-wrapper::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+  }
+  .line::-webkit-scrollbar-thumb:hover,
+  .secondline::-webkit-scrollbar-thumb:hover,
+  .moveslist-wrapper::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
   }
 </style>
