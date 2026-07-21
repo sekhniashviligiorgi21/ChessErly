@@ -28,8 +28,10 @@
   const status = ref('idle') // 'idle', 'correct', 'wrong'
   const activeTab = ref('puzzle')
 
-  // Analysis unlocks as soon as a move is made (correct or wrong) or solution is shown
-  const canViewAnalysis = computed(() => status.value !== 'idle' || solutionShown.value)
+  // Analysis unlocks as soon as the puzzle is solved correctly or the solution is shown.
+  // NOTE: previously this also unlocked on a wrong move (status !== 'idle'); now a wrong
+  // move alone does not reveal analysis â€” only 'correct' or solutionShown do.
+  const canViewAnalysis = computed(() => status.value === 'correct' || solutionShown.value)
 
   // --- Played Move Info ---
   const playedMoveSan = ref('')
@@ -314,8 +316,47 @@
       boardAPI.value.hideMoves()
       updateBoardArrows()
     }
-    // BUG FIX: Recalculate engine state so the eval bar properly resets
+    // Analysis is locked again now that status is back to 'idle'; this just clears
+    // any stale moveData rather than re-triggering an engine call (getAccuracy no-ops
+    // when analysis isn't unlocked and checkSolution isn't requested).
     getAccuracy()
+  }
+
+  // Resets the CURRENT puzzle back to its starting position (same puzzle, fresh attempt).
+  // Used when the user taps/moves on the board after a wrong-move result, instead of
+  // requiring them to press "Try Again".
+  function resetPuzzleAfterWrong() {
+    if (!currentPuzzle.value) return
+
+    chess.load(currentPuzzle.value.fen)
+    moveTree.fen = currentPuzzle.value.fen
+    moveTree.children = []
+    moveTree.analysisData = null
+    moveTree.accuracy = null
+    nodeIdCounter = 1
+    for (const key in nodeMap) {
+      if (parseInt(key) !== 0) delete nodeMap[key]
+    }
+    currentNode.value = moveTree
+    movesListUCI.value = []
+    treeVersion.value++
+
+    status.value = 'idle'
+    solutionShown.value = false
+    hintShown.value = false
+    hintUsed.value = false
+    hintSquare.value = null
+    moveData.value = null
+    lastMoveSquare.value = null
+    lastMoveAccuracy.value = null
+    isAccuracy.value = ''
+    activeTab.value = 'puzzle'
+
+    if (boardAPI.value) {
+      boardAPI.value.setPosition(currentPuzzle.value.fen)
+      boardAPI.value.hideMoves()
+      updateBoardArrows()
+    }
   }
 
   function redoMove() {
@@ -610,6 +651,15 @@
       return
     }
 
+    // If the puzzle was just failed and the solution hasn't been revealed, any further
+    // interaction with the board (drag or click-move) resets the puzzle back to the
+    // start instead of applying a move on top of the failed attempt.
+    if (status.value === 'wrong' && !solutionShown.value) {
+      boardAPI.value.setPosition(currentNode.value.fen)
+      resetPuzzleAfterWrong()
+      return
+    }
+
     if (boardAPI.value) {
       boardAPI.value.hideMoves()
       updateBoardArrows()
@@ -652,6 +702,16 @@
   }
 
   async function getAccuracy(checkSolution = false) {
+    // Analysis (eval bar, best lines, move classification) stays hidden until the puzzle
+    // is solved or the solution is shown. The one exception is the solution-check call
+    // itself (checkSolution === true), which still needs to run the engine to determine
+    // whether the played move was correct â€” but its results won't be surfaced to the UI
+    // (moveData etc.) unless canViewAnalysis is true by the time it resolves, i.e. the
+    // move turned out to be correct.
+    if (!checkSolution && !canViewAnalysis.value) {
+      return
+    }
+
     await cancelAnalysis()
 
     const cached = currentNode.value.analysisData
@@ -659,6 +719,11 @@
     const hasRequiredMultiPV = !requiresMultiPV3 || !currentNode.value.san || (cached?.topMoves?.length >= 3)
 
     if (cached && cached.depth >= targetDepth.value && hasRequiredMultiPV) {
+      if (checkSolution) {
+        checkPuzzleSolution(cached)
+      }
+      if (!canViewAnalysis.value) return
+
       moveData.value = cached
       lastMoveSquare.value = movesListUCI.value.at(-1)?.slice(2, 4) ?? null
       lastMoveAccuracy.value = cached.move_accuracy
@@ -673,12 +738,10 @@
       uciThirdLine()
       uciLine()
       updateBoardArrows()
-      
-      if (checkSolution) checkPuzzleSolution()
       return
     }
 
-    if (cached && !hasRequiredMultiPV) {
+    if (cached && !hasRequiredMultiPV && canViewAnalysis.value) {
       moveData.value = cached
       lastMoveSquare.value = movesListUCI.value.at(-1)?.slice(2, 4) ?? null
       lastMoveAccuracy.value = cached.move_accuracy
@@ -693,9 +756,9 @@
       updateBoardArrows()
     }
 
-    isAnalyzing.value = true
+    isAnalyzing.value = canViewAnalysis.value
     bestArrowSquares.value = null
-    if (boardAPI.value) {
+    if (canViewAnalysis.value && boardAPI.value) {
       boardAPI.value.hideMoves()
       updateBoardArrows()
     }
@@ -708,12 +771,23 @@
       movesListUCI.value.slice(0, -1),
       targetDepth.value,
       (result) => {
+        currentNode.value.accuracy = result.move_accuracy
+        currentNode.value.analysisData = result
+
+        if (checkSolution) {
+          checkPuzzleSolution(result)
+        }
+
+        // Only surface the result to the UI if analysis is (now) allowed to be seen â€”
+        // i.e. the puzzle was just solved correctly, or the solution has been shown.
+        if (!canViewAnalysis.value) {
+          isAnalyzing.value = false
+          return
+        }
+
         moveData.value = result
         lastMoveSquare.value = movesListUCI.value.at(-1)?.slice(2, 4) ?? null
         lastMoveAccuracy.value = result.move_accuracy
-        
-        currentNode.value.accuracy = result.move_accuracy
-        currentNode.value.analysisData = result
         currentDepth.value = result.depth
         isAnalyzing.value = false
 
@@ -726,8 +800,6 @@
         updateBoardArrows()
 
         treeVersion.value++
-
-        if (checkSolution) checkPuzzleSolution()
       },
       beforeFen,
       afterFen,
@@ -736,10 +808,10 @@
     )
   }
 
-  function checkPuzzleSolution() {
+  function checkPuzzleSolution(result) {
     if (status.value !== 'idle') return 
     
-    const acc = moveData.value?.move_accuracy
+    const acc = result?.move_accuracy
     const playedUci = currentNode.value.uci
     const dbBestMove = currentPuzzle.value.bestMove
 
@@ -824,7 +896,7 @@
     if (!boardAPI.value) return
     const shapes = []
 
-    if (status.value !== 'idle' && bestArrowSquares.value) {
+    if (canViewAnalysis.value && bestArrowSquares.value) {
       shapes.push({ orig: bestArrowSquares.value.from, dest: bestArrowSquares.value.to, brush: 'green' })
     }
 
@@ -889,7 +961,7 @@
   }
 
   function prettyMove(move) {
-    const pieces = { 'K': '♚', 'Q': '♛', 'R': '♜', 'B': '♝', 'N': '♞' }
+    const pieces = { 'K': 'â™š', 'Q': 'â™›', 'R': 'â™œ', 'B': 'â™', 'N': 'â™ž' }
     return move ? move.replace(/[KQRBN]/g, p => pieces[p]) : ''
   }
 
@@ -987,7 +1059,7 @@
     </div>
 
     <div v-else-if="puzzlesExhausted" class="empty-state exhausted-state">
-      <div class="trophy-icon">🏆</div>
+      <div class="trophy-icon">ðŸ†</div>
       <h2>All Caught Up!</h2>
       <p>You have successfully solved all the available puzzles generated from your games.</p>
       <div class="exhausted-actions">
@@ -1062,7 +1134,7 @@
           <div class="boardtools" v-if="canViewAnalysis">
             <button class="jumpstart" @click="goToStart" :disabled="currentNode.parent === null" title="Jump to start"><<</button>
             <button class="undo" @click="undoAccuracy" title="previous" :disabled="currentNode.parent === null"><-</button>
-            <button class="reverse" @click="flipBoard" title="flip board">↳↰</button>
+            <button class="reverse" @click="flipBoard" title="flip board">â†³â†°</button>
             <button class="redo" title="next" @click="redoAccuracy" :disabled="currentNode.children.length === 0">-></button>
             <button class="jumpend" @click="goToEnd" :disabled="currentNode.children.length === 0" title="Jump to end">>></button>
           </div>
@@ -1105,14 +1177,14 @@
             </div>
             <div class="rating-meta">
               <span class="puzzles-remaining">{{ puzzleQueue.length }} left</span>
-              <span class="streak-badge" v-if="streak > 1">🔥 {{ streak }}</span>
+              <span class="streak-badge" v-if="streak > 1">ðŸ”¥ {{ streak }}</span>
             </div>
           </div>
 
           <!-- Nice White/Black To Play Text -->
           <div class="turn-indicator">
-            <span v-if="currentPuzzle?.turn === 'white'" class="turn-text white-turn">⚪ White to Play</span>
-            <span v-else class="turn-text black-turn">⚫ Black to Play</span>
+            <span v-if="currentPuzzle?.turn === 'white'" class="turn-text white-turn">âšª White to Play</span>
+            <span v-else class="turn-text black-turn">âš« Black to Play</span>
           </div>
 
           <!-- Move played in the actual game -->
@@ -1128,31 +1200,31 @@
 
           <div class="action-buttons">
             <button v-if="status === 'idle' && !hintShown" class="tool-btn primary" @click="showHint">
-              💡 Hint
+              ðŸ’¡ Hint
             </button>
             <button v-if="status === 'idle' && hintShown" class="tool-btn outline" @click="showSolution">
-              👁️ Show Solution
+              ðŸ‘ï¸ Show Solution
             </button>
             
             <button v-if="status === 'correct'" class="tool-btn primary" @click="loadRandomPuzzle">
-              Next Puzzle →
+              Next Puzzle â†’
             </button>
             
-            <button v-if="status === 'wrong' && !solutionShown" class="tool-btn outline" @click="undoMoveAndResetStatus">
-              ↩️ Try Again
+            <button v-if="status === 'wrong' && !solutionShown" class="tool-btn outline" @click="resetPuzzleAfterWrong">
+              â†©ï¸ Try Again
             </button>
             <button v-if="status === 'wrong' && !solutionShown" class="tool-btn outline" @click="showSolution">
               Show Solution
             </button>
             <button v-if="status === 'wrong' && solutionShown" class="tool-btn primary" @click="loadRandomPuzzle">
-              Next Puzzle →
+              Next Puzzle â†’
             </button>
           </div>
           
           <div class="bottom-row">
-            <p class="kbd-hint">Space: Next &nbsp;·&nbsp; H: Hint &nbsp;·&nbsp; S: Solution</p>
+            <p class="kbd-hint">Space: Next &nbsp;Â·&nbsp; H: Hint &nbsp;Â·&nbsp; S: Solution</p>
             <button class="icon-btn-sound" @click="soundOn = !soundOn">
-              {{ soundOn ? '🔊' : '🔇' }}
+              {{ soundOn ? 'ðŸ”Š' : 'ðŸ”‡' }}
             </button>
           </div>
         </div>
