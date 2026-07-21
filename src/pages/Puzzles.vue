@@ -30,7 +30,7 @@
 
   // Analysis unlocks as soon as the puzzle is solved correctly or the solution is shown.
   // NOTE: previously this also unlocked on a wrong move (status !== 'idle'); now a wrong
-  // move alone does not reveal analysis â€” only 'correct' or solutionShown do.
+  // move alone does not reveal analysis — only 'correct' or solutionShown do.
   const canViewAnalysis = computed(() => status.value === 'correct' || solutionShown.value)
 
   // --- Played Move Info ---
@@ -705,7 +705,7 @@
     // Analysis (eval bar, best lines, move classification) stays hidden until the puzzle
     // is solved or the solution is shown. The one exception is the solution-check call
     // itself (checkSolution === true), which still needs to run the engine to determine
-    // whether the played move was correct â€” but its results won't be surfaced to the UI
+    // whether the played move was correct — but its results won't be surfaced to the UI
     // (moveData etc.) unless canViewAnalysis is true by the time it resolves, i.e. the
     // move turned out to be correct.
     if (!checkSolution && !canViewAnalysis.value) {
@@ -778,7 +778,7 @@
           checkPuzzleSolution(result)
         }
 
-        // Only surface the result to the UI if analysis is (now) allowed to be seen â€”
+        // Only surface the result to the UI if analysis is (now) allowed to be seen —
         // i.e. the puzzle was just solved correctly, or the solution has been shown.
         if (!canViewAnalysis.value) {
           isAnalyzing.value = false
@@ -961,7 +961,7 @@
   }
 
   function prettyMove(move) {
-    const pieces = { 'K': 'â™š', 'Q': 'â™›', 'R': 'â™œ', 'B': 'â™', 'N': 'â™ž' }
+    const pieces = { 'K': '♚', 'Q': '♛', 'R': '♜', 'B': '♝', 'N': '♞' }
     return move ? move.replace(/[KQRBN]/g, p => pieces[p]) : ''
   }
 
@@ -1059,7 +1059,7 @@
     </div>
 
     <div v-else-if="puzzlesExhausted" class="empty-state exhausted-state">
-      <div class="trophy-icon">ðŸ†</div>
+      <div class="trophy-icon">🏆</div>
       <h2>All Caught Up!</h2>
       <p>You have successfully solved all the available puzzles generated from your games.</p>
       <div class="exhausted-actions">
@@ -1134,7 +1134,7 @@
           <div class="boardtools" v-if="canViewAnalysis">
             <button class="jumpstart" @click="goToStart" :disabled="currentNode.parent === null" title="Jump to start"><<</button>
             <button class="undo" @click="undoAccuracy" title="previous" :disabled="currentNode.parent === null"><-</button>
-            <button class="reverse" @click="flipBoard" title="flip board">â†³â†°</button>
+            <button class="reverse" @click="flipBoard" title="flip board">↳↰</button>
             <button class="redo" title="next" @click="redoAccuracy" :disabled="currentNode.children.length === 0">-></button>
             <button class="jumpend" @click="goToEnd" :disabled="currentNode.children.length === 0" title="Jump to end">>></button>
           </div>
@@ -1177,14 +1177,14 @@
             </div>
             <div class="rating-meta">
               <span class="puzzles-remaining">{{ puzzleQueue.length }} left</span>
-              <span class="streak-badge" v-if="streak > 1">ðŸ”¥ {{ streak }}</span>
+              <span class="streak-badge" v-if="streak > 1">🔥 {{ streak }}</span>
             </div>
           </div>
 
           <!-- Nice White/Black To Play Text -->
           <div class="turn-indicator">
-            <span v-if="currentPuzzle?.turn === 'white'" class="turn-text white-turn">âšª White to Play</span>
-            <span v-else class="turn-text black-turn">âš« Black to Play</span>
+            <span v-if="currentPuzzle?.turn === 'white'" class="turn-text white-turn">⚪ White to Play</span>
+            <span v-else class="turn-text black-turn">⚫ Black to Play</span>
           </div>
 
           <!-- Move played in the actual game -->
@@ -1200,31 +1200,31 @@
 
           <div class="action-buttons">
             <button v-if="status === 'idle' && !hintShown" class="tool-btn primary" @click="showHint">
-              ðŸ’¡ Hint
+              💡 Hint
             </button>
             <button v-if="status === 'idle' && hintShown" class="tool-btn outline" @click="showSolution">
-              ðŸ‘ï¸ Show Solution
+              👁️ Show Solution
             </button>
             
             <button v-if="status === 'correct'" class="tool-btn primary" @click="loadRandomPuzzle">
-              Next Puzzle â†’
+              Next Puzzle →
             </button>
             
             <button v-if="status === 'wrong' && !solutionShown" class="tool-btn outline" @click="resetPuzzleAfterWrong">
-              â†©ï¸ Try Again
+              ↩️ Try Again
             </button>
             <button v-if="status === 'wrong' && !solutionShown" class="tool-btn outline" @click="showSolution">
               Show Solution
             </button>
             <button v-if="status === 'wrong' && solutionShown" class="tool-btn primary" @click="loadRandomPuzzle">
-              Next Puzzle â†’
+              Next Puzzle →
             </button>
           </div>
           
           <div class="bottom-row">
-            <p class="kbd-hint">Space: Next &nbsp;Â·&nbsp; H: Hint &nbsp;Â·&nbsp; S: Solution</p>
+            <p class="kbd-hint">Space: Next &nbsp;·&nbsp; H: Hint &nbsp;·&nbsp; S: Solution</p>
             <button class="icon-btn-sound" @click="soundOn = !soundOn">
-              {{ soundOn ? 'ðŸ”Š' : 'ðŸ”‡' }}
+              {{ soundOn ? '🔊' : '🔇' }}
             </button>
           </div>
         </div>
