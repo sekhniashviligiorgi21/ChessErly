@@ -843,6 +843,15 @@
       playSound('wrong')
       sessionStats.value.failed++
       status.value = 'wrong'
+
+      // Auto-reset shortly after showing the wrong-move indicator, so the puzzle
+      // is immediately retryable without requiring a tap or button press. Skipped
+      // if the user reveals the solution during the brief window.
+      setTimeout(() => {
+        if (status.value === 'wrong' && !solutionShown.value) {
+          resetPuzzleAfterWrong()
+        }
+      }, 900)
     }
   }
 
@@ -1101,12 +1110,12 @@
               />
 
               <!-- Status or Move Classification Icon -->
-              <svg v-if="status === 'correct' && lastMoveSquare" class="board-acc-icon status-icon" viewBox="0 0 24 24" :style="accuracyIconStyle(lastMoveSquare)">
+              <svg v-if="status === 'correct' && lastMoveSquare && activeTab === 'puzzle'" class="board-acc-icon status-icon" viewBox="0 0 24 24" :style="accuracyIconStyle(lastMoveSquare)">
                  <circle cx="12" cy="12" r="10" fill="#6ad13f" />
                  <path d="M7 13l3 3 7-7" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none" />
               </svg>
               
-              <svg v-else-if="status === 'wrong' && lastMoveSquare" class="board-acc-icon status-icon" viewBox="0 0 24 24" :style="accuracyIconStyle(lastMoveSquare)">
+              <svg v-else-if="status === 'wrong' && lastMoveSquare && activeTab === 'puzzle'" class="board-acc-icon status-icon" viewBox="0 0 24 24" :style="accuracyIconStyle(lastMoveSquare)">
                  <circle cx="12" cy="12" r="10" fill="#ff4c4c" />
                  <path d="M8 8l8 8M16 8l-8 8" stroke="#fff" stroke-width="2.5" stroke-linecap="round" fill="none" />
               </svg>
@@ -1210,9 +1219,6 @@
               Next Puzzle →
             </button>
             
-            <button v-if="status === 'wrong' && !solutionShown" class="tool-btn outline" @click="resetPuzzleAfterWrong">
-              ↩️ Try Again
-            </button>
             <button v-if="status === 'wrong' && !solutionShown" class="tool-btn outline" @click="showSolution">
               Show Solution
             </button>
