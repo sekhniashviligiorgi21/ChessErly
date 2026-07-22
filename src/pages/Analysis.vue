@@ -1033,7 +1033,7 @@
       }
     } finally {
       isImporting.value = false
-      await getAccuracy()
+      getAccuracy()
     }
   }
 
