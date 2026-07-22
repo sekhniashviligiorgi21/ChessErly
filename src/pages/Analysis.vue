@@ -1109,9 +1109,22 @@
   const estimatedRatings = computed(() => {
     const estimate = (accuracy) => {
       if (accuracy === null) return null
-      // Approximate Chess.com's rating formula based on accuracy
-      // 100% -> 2400, 90% -> 2190, 80% -> 1980, 50% -> 1350
-      return Math.min(2850, Math.round(accuracy * 21 + 300))
+      
+      // Tier 3: 90% to 100% (Exponentially harder)
+      // 90% -> 2000, 95% -> 2250, 100% -> 2500
+      if (accuracy >= 90) {
+        return Math.round(2000 + (accuracy - 90) * 50)
+      }
+      
+      // Tier 2: 70% to 90% (Linear progression)
+      // 70% -> 1600, 80% -> 1800, 90% -> 2000
+      if (accuracy >= 70) {
+        return Math.round(1600 + (accuracy - 70) * 20)
+      }
+      
+      // Tier 1: Below 70% (Steady dropoff)
+      // 60% -> 1500, 50% -> 1400, 0% -> 900
+      return Math.round(900 + accuracy * 10)
     }
     
     return {
