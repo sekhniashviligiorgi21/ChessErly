@@ -51,6 +51,17 @@ function schedulePersist() {
 
 const localEvalCache = loadCacheFromStorage(LOCAL_EVAL_STORAGE_KEY)
 
+function ensureScoreFields(score) {
+    if (!score) return score
+    if (!('Centipawn' in score)) {
+        score.Centipawn = score.type === "cp" ? score.value : null
+    }
+    if (!('Mate' in score)) {
+        score.Mate = score.type === "mate" ? score.value : null
+    }
+    return score
+}
+
 const STARTPOS_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 
 // ---- Local Opening Book -----------------------------------------------
@@ -317,12 +328,21 @@ function analyzePosition(moves, depth, onUpdate = null, multiPV = 3, rootFen = n
     const cacheKey = `${effectiveRoot ?? 'startpos'}|${moves.join(",")}|${depth}|${multiPV}`
     if (localEvalCache.has(cacheKey)) {
         const cachedResult = localEvalCache.get(cacheKey)
-        if (onUpdate && cachedResult) {
-            onUpdate({
-                evaluation: cachedResult.evaluation,
-                topMoves: cachedResult.topMoves,
-                currentDepth: cachedResult.currentDepth || depth
-            })
+        if (cachedResult) {
+            // Backfill Centipawn/Mate for old cached entries
+            if (cachedResult.evaluation) ensureScoreFields(cachedResult.evaluation)
+            if (cachedResult.topMoves) {
+                for (const m of cachedResult.topMoves) {
+                    if (m?.score) ensureScoreFields(m.score)
+                }
+            }
+            if (onUpdate) {
+                onUpdate({
+                    evaluation: cachedResult.evaluation,
+                    topMoves: cachedResult.topMoves,
+                    currentDepth: cachedResult.currentDepth || depth
+                })
+            }
         }
         return Promise.resolve(cachedResult)
     }
@@ -358,9 +378,15 @@ function analyzePosition(moves, depth, onUpdate = null, multiPV = 3, rootFen = n
                 if (!score) return
                 if (isBlackToMove) score.value = -score.value
 
+                // Add Centipawn and Mate directly to the score object so that
+                // excellent_eval and third_eval (which reference .score) have them
+                score.Centipawn = score.type === "cp" ? score.value : null
+                score.Mate = score.type === "mate" ? score.value : null
+
                 const info = {
                     Move: pv[1].split(" ")[0],
-                    Centipawn: score.type === "cp" ? score.value : null,
+                    Centipawn: score.Centipawn,
+                    Mate: score.Mate,
                     score,
                     line: pv[1].split(" ")
                 }
