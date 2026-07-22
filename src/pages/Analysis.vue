@@ -1106,6 +1106,20 @@
     return { white: finalize(white), black: finalize(black) }
   })
 
+  const estimatedRatings = computed(() => {
+    const estimate = (accuracy) => {
+      if (accuracy === null) return null
+      // Approximate Chess.com's rating formula based on accuracy
+      // 100% -> 2400, 90% -> 2190, 80% -> 1980, 50% -> 1350
+      return Math.min(2850, Math.round(accuracy * 21 + 300))
+    }
+    
+    return {
+      white: estimate(gameReportStats.value.white.accuracy),
+      black: estimate(gameReportStats.value.black.accuracy)
+    }
+  })
+
   const importProgressPercent = computed(() => {
     if (!importProgress.value.total) return 0
     return Math.round((importProgress.value.current / importProgress.value.total) * 100)
@@ -1613,6 +1627,16 @@
               </div>
               <div class="accuracy-score empty" v-else>—</div>
 
+              <!-- Estimated Rating -->
+              <div class="est-rating" v-if="estimatedRatings.white !== null">
+                <span class="est-rating-label">Est. Rating</span>
+                <span class="est-rating-value">{{ estimatedRatings.white }}</span>
+              </div>
+              <div class="est-rating empty" v-else>
+                <span class="est-rating-label">Est. Rating</span>
+                <span class="est-rating-value">—</span>
+              </div>
+
               <div
                 v-for="key in classificationOrder"
                 :key="'w-' + key"
@@ -1634,6 +1658,16 @@
                 {{ gameReportStats.black.accuracy.toFixed(1) }}<span class="accuracy-percent">%</span>
               </div>
               <div class="accuracy-score empty" v-else>—</div>
+
+              <!-- Estimated Rating -->
+              <div class="est-rating" v-if="estimatedRatings.black !== null">
+                <span class="est-rating-label">Est. Rating</span>
+                <span class="est-rating-value">{{ estimatedRatings.black }}</span>
+              </div>
+              <div class="est-rating empty" v-else>
+                <span class="est-rating-label">Est. Rating</span>
+                <span class="est-rating-value">—</span>
+              </div>
 
               <div
                 v-for="key in classificationOrder"
@@ -2507,6 +2541,35 @@
   .accuracy-percent {
     font-size: 0.6em;
     opacity: 0.75;
+  }
+
+  .est-rating {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 0.8rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .est-rating-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: rgba(245, 245, 220, 0.5);
+    font-weight: 600;
+    margin-bottom: 0.2rem;
+  }
+
+  .est-rating-value {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #a8d97a;
+  }
+
+  .est-rating.empty .est-rating-value {
+    color: rgba(245, 245, 220, 0.4);
   }
 
   .report-row {
