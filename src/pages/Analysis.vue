@@ -1545,14 +1545,14 @@
           </div>
 
           <div class="secondline" v-if="excellentSanLine.length">
-            <span class="evalnum3">{{ moveData?.excellent_eval != null ? (moveData.excellent_eval / 100).toFixed(2) : "" }}</span>
+            <span class="evalnum3">{{ moveData?.excellent_eval ? formatEval(moveData.excellent_eval) : "" }}</span>
             <span v-for="(move, idx) in excellentSanLine" :key="'exc-' + idx" class="line-move" @click="playLineMoves(moveData.excellent_line, idx + 1)">
               {{ prettyMove(move) }}&nbsp;
             </span>
           </div>
 
           <div class="secondline" v-if="thirdSanLine.length">
-            <span class="evalnum3">{{ moveData?.third_eval != null ? (moveData.third_eval / 100).toFixed(2) : "" }}</span>
+            <span class="evalnum3">{{ moveData?.excellent_eval ? formatEval(moveData.excellent_eval) : "" }}</span>
             <span v-for="(move, idx) in thirdSanLine" :key="'third-' + idx" class="line-move" @click="playLineMoves(moveData.third_line, idx + 1)">
               {{ prettyMove(move) }}&nbsp;
             </span>
