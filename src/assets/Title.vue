@@ -86,6 +86,8 @@
       class="btn"
       :style="{ background: `linear-gradient(${bgColor('puzzles')})` }"
       @click="puzzlesClick()"
+      disabled
+      data-tooltip="Coming soon..."
     >
       🧩 Puzzles
     </button>
