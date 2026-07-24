@@ -1,6 +1,3 @@
-Here is the full updated code. I have removed the text truncation properties (`overflow: hidden`, `text-overflow: ellipsis`, and `white-space: nowrap`) from the `.opening-name` class and added `word-break: break-word` so that the opening names will wrap and display fully on all screen sizes.
-
-```vue
 <script setup>
   import { ref, computed, onMounted, watch } from 'vue'
   import Title from '../assets/Title.vue'
